@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>观影字幕助手 · 在线视频自动识别+翻译字幕</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --card2:#1d212b; --line:#2a2f3a;
+    --txt:#e8eaf0; --dim:#9aa3b2; --acc:#4f8cff; --ok:#3ecf8e; --warn:#ffb454; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:15px; line-height:1.5;}
+  .wrap{max-width:720px; margin:0 auto; padding:12px 12px 40px}
+  h1{font-size:19px; margin:8px 0 2px}
+  .sub{color:var(--dim); font-size:12.5px; margin-bottom:12px}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:12px; margin-bottom:12px}
+  .card h2{font-size:14.5px; margin:0 0 10px; color:var(--acc); font-weight:600}
+  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  input[type=text],input[type=password],select,textarea{
+    background:var(--card2); color:var(--txt); border:1px solid var(--line);
+    border-radius:8px; padding:9px 10px; font-size:14px; outline:none; min-width:0;}
+  input[type=text]:focus,select:focus{border-color:var(--acc)}
+  select{max-width:100%}
+  button{background:var(--card2); color:var(--txt); border:1px solid var(--line);
+    border-radius:8px; padding:9px 14px; font-size:14px; cursor:pointer;}
+  button:active{filter:brightness(1.2)}
+  button.primary{background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600}
+  button.danger{background:transparent; border-color:var(--err); color:var(--err)}
+  button:disabled{opacity:.45; cursor:not-allowed}
+  .grow{flex:1 1 160px}
+  .narrow{flex:0 0 auto}
+  video{width:100%; aspect-ratio:16/9; background:#000; border-radius:10px; display:block}
+  .vwrap{position:relative}
+  #subOverlay{position:absolute; left:0; right:0; bottom:64px; padding:0 8%;
+    text-align:center; pointer-events:none; z-index:5;
+    transition:opacity .15s}
+  #subOrig{font-size:calc(var(--subsize,19px) * .72); color:#e0e0e0; opacity:.9;
+    text-shadow:0 1px 3px #000,0 0 2px #000; margin-bottom:2px; display:none}
+  #subZh{font-size:var(--subsize,19px); color:#fff; font-weight:600;
+    text-shadow:0 1px 4px #000,0 0 3px #000; display:none}
+  #banner{display:none; margin:10px 0 0; padding:9px 10px; border-radius:8px;
+    background:rgba(255,180,84,.12); border:1px solid var(--warn); color:var(--warn); font-size:13px}
+  #banner button{margin-top:6px}
+  .status{color:var(--dim); font-size:12.5px; margin-top:8px; word-break:break-all}
+  .status.ok{color:var(--ok)} .status.err{color:var(--err)} .status.warn{color:var(--warn)}
+  #level{font-size:11px; color:var(--dim); letter-spacing:1px}
+  label.fld{display:block; font-size:12.5px; color:var(--dim); margin:8px 0 4px}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px}
+  #linesList{max-height:260px; overflow:auto; margin-top:8px}
+  .line{padding:7px 9px; border-bottom:1px solid var(--line); font-size:13px}
+  .line .t{color:var(--dim); font-size:11px}
+  .line .o{color:#cfd6e4} .line .z{color:var(--ok)}
+  details{margin-top:8px} summary{cursor:pointer; color:var(--dim); font-size:13px}
+  #bmText{width:100%; height:72px; font-size:11px; word-break:break-all; color:var(--dim)}
+  .faq{font-size:13px; color:var(--dim)} .faq b{color:var(--txt)}
+  .faq li{margin-bottom:6px}
+  #toast{position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+    background:#2a2f3a; color:#fff; padding:9px 14px; border-radius:8px; font-size:13px;
+    display:none; z-index:99; max-width:88vw; box-shadow:0 4px 16px rgba(0,0,0,.5)}
+  input[type=range]{flex:1; accent-color:var(--acc)}
+  .hint{font-size:12px; color:var(--dim); margin-top:6px}
+  a{color:var(--acc)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>观影字幕助手</h1>
+  <div class="sub">在线视频直链播放 → 本地语音识别 → 自动翻译 → 双语字幕 · 全程手机本地运行</div>
+
+  <!-- 播放器 -->
+  <div class="card">
+    <div class="row">
+      <input type="text" id="urlInput" class="grow" placeholder="粘贴 m3u8 / mp4 视频直链" autocapitalize="off" autocorrect="off">
+      <button id="btnOpen" class="primary narrow">打开</button>
+    </div>
+    <div style="height:10px"></div>
+    <div class="vwrap">
+      <video id="video" controls playsinline preload="metadata"></video>
+      <div id="subOverlay"><div id="subOrig"></div><div id="subZh"></div></div>
+    </div>
+    <div id="banner">
+      检测不到视频声音（该直链受跨域限制）。可切换「麦克风拾音」模式：让手机麦克风对着声音来源继续识别，效果受环境影响。
+      <br><button id="btnMicFromBanner" class="primary">切换麦克风拾音</button>
+    </div>
+  </div>
+
+  <!-- 语音识别 -->
+  <div class="card">
+    <h2>语音识别（Whisper 本地运行）</h2>
+    <div class="grid3">
+      <div>
+        <label class="fld">模型</label>
+        <select id="modelSel" style="width:100%">
+          <option value="Xenova/whisper-tiny">tiny 多语言（约45MB，推荐）</option>
+          <option value="Xenova/whisper-tiny.en">tiny 英语专用（更准）</option>
+          <option value="Xenova/whisper-base.en">base 英语专用（更准更慢）</option>
+          <option value="Xenova/whisper-base">base 多语言（约80MB）</option>
+        </select>
+      </div>
+      <div>
+        <label class="fld">影片语言</label>
+        <select id="langSel" style="width:100%">
+          <option value="en">英语</option>
+          <option value="zh">中文</option>
+          <option value="ja">日语</option>
+          <option value="ko">韩语</option>
+          <option value="ru">俄语</option>
+          <option value="auto">自动检测</option>
+        </select>
+      </div>
+      <div>
+        <label class="fld">分段时长</label>
+        <select id="chunkSel" style="width:100%">
+          <option value="5">5 秒（延迟低）</option>
+          <option value="8">8 秒</option>
+          <option value="10" selected>10 秒（推荐）</option>
+          <option value="15">15 秒</option>
+        </select>
+      </div>
+    </div>
+    <div style="height:10px"></div>
+    <div class="row">
+      <button id="btnStart" class="primary grow">开始识别</button>
+      <button id="btnStop" class="danger narrow">停止</button>
+      <button id="btnMic" class="narrow">麦克风拾音：关</button>
+    </div>
+    <div class="status" id="status">待机。先播放视频，再点「开始识别」（首次需下载模型，之后走浏览器缓存）。</div>
+    <div class="status" id="level"></div>
+  </div>
+
+  <!-- 翻译设置 -->
+  <div class="card">
+    <h2>翻译</h2>
+    <div class="grid2">
+      <div>
+        <label class="fld">翻译引擎</label>
+        <select id="engineSel" style="width:100%">
+          <option value="google" selected>谷歌翻译（免 key）</option>
+          <option value="mymemory">MyMemory（免 key 备用）</option>
+          <option value="custom">自定义 API（OpenAI 兼容，质量最佳）</option>
+        </select>
+      </div>
+      <div>
+        <label class="fld">原文语言（送翻译）</label>
+        <select id="slSel" style="width:100%">
+          <option value="auto" selected>自动</option>
+          <option value="en">英语</option>
+          <option value="zh">中文</option>
+          <option value="ja">日语</option>
+          <option value="ko">韩语</option>
+        </select>
+      </div>
+    </div>
+    <div id="apiBox" style="display:none">
+      <label class="fld">API 地址（如 https://api.xxx.com/v1）</label>
+      <input type="text" id="apiBase" style="width:100%" placeholder="https://api.deepseek.com/v1">
+      <label class="fld">API Key</label>
+      <input type="password" id="apiKey" style="width:100%" placeholder="sk-...">
+      <label class="fld">模型名</label>
+      <input type="text" id="apiModel" style="width:100%" placeholder="deepseek-chat / gpt-4o-mini ...">
+    </div>
+    <div class="hint">译文按原句缓存，重看/续看不重复翻译。免 key 引擎不可用时自动切换备用引擎。</div>
+  </div>
+
+  <!-- 显示设置 -->
+  <div class="card">
+    <h2>字幕显示</h2>
+    <div class="grid3">
+      <div>
+        <label class="fld">模式</label>
+        <select id="modeSel" style="width:100%">
+          <option value="both" selected>双语</option>
+          <option value="zh">仅中文</option>
+          <option value="orig">仅原文</option>
+        </select>
+      </div>
+      <div>
+        <label class="fld">字号 <span id="fsVal">19</span></label>
+        <input type="range" id="fontSize" min="14" max="30" value="19">
+      </div>
+      <div>
+        <label class="fld">偏移 <span id="offVal">0.0s</span></label>
+        <input type="range" id="offset" min="-5000" max="5000" step="100" value="0">
+      </div>
+    </div>
+  </div>
+
+  <!-- 字幕记录 -->
+  <div class="card">
+    <h2>字幕记录</h2>
+    <div class="row">
+      <button id="btnExport" class="grow">导出 SRT 字幕文件</button>
+      <button id="btnClear" class="danger narrow">清空</button>
+    </div>
+    <div id="linesList"></div>
+  </div>
+
+  <!-- 工具箱 -->
+  <div class="card">
+    <h2>工具箱 · 书签脚本（一键提取影视页视频直链）</h2>
+    <p class="hint" style="margin-top:0">在影视网站播放页运行下面的书签脚本，会自动找出视频直链并复制，然后粘贴到本页顶部输入框。</p>
+    <details open>
+      <summary><b>iPhone Safari 安装步骤</b></summary>
+      <ol class="faq">
+        <li>先<b>全选复制</b>下面文本框里的脚本代码（点「复制脚本」）。</li>
+        <li>用 Safari 随便打开一个网页 → 点分享按钮 → 「添加书签」，名称填「提取视频」。</li>
+        <li>打开 书签 → 编辑，找到「提取视频」，把<b>网址</b>整段删掉，粘贴刚才复制的脚本，保存。</li>
+        <li>在影视网站播放页 → 点地址栏 → 从书签里点「提取视频」，直链会自动复制并弹出。</li>
+      </ol>
+    </details>
+    <details>
+      <summary><b>Android Chrome 安装步骤</b></summary>
+      <ol class="faq">
+        <li>复制脚本代码；在电脑版 Chrome 上收藏任意页面，把网址替换为脚本后同步到手机；</li>
+        <li>或安装「Bookmarklet Launcher」类小工具来运行脚本（Chrome 手机版地址栏不允许直接输入 javascript:）。</li>
+      </ol>
+    </details>
+    <div style="height:8px"></div>
+    <textarea id="bmText" readonly></textarea>
+    <div style="height:8px"></div>
+    <div class="row">
+      <button id="btnCopyBm" class="primary grow">复制脚本</button>
+    </div>
+  </div>
+
+  <!-- 说明与限制 -->
+  <div class="card faq">
+    <h2 style="color:var(--acc)">常见问题与限制</h2>
+    <ul>
+      <li><b>直链被防盗链/跨域拦截</b>：部分网站直链需要特定来源（Referer）才能访问，会加载失败，属于站点限制，可换播放源。</li>
+      <li><b>iOS 版本</b>：直链为 m3u8 时需 iOS 17.1+（支持 Managed Media Source），否则回退系统播放器，跨域视频将无法捕获声音（可用麦克风拾音兜底）。Android Chrome 无此限制。</li>
+      <li><b>延迟</b>：识别在手机本地运行，10 秒音频约需 2～8 秒处理，字幕会滞后一小段，可用「偏移」微调显示时机。</li>
+      <li><b>准确率</b>：tiny 模型对嘈杂/音乐背景识别较一般；英语内容建议选英语专用模型；对效果不满意可换 base 模型或自定义翻译 API。</li>
+      <li><b>保持前台</b>：锁屏或切后台后识别会暂停，已尽量申请屏幕常亮。</li>
+      <li><b>版权提示</b>：本工具仅用于个人学习辅助理解，请遵守当地法律法规与网站服务条款。</li>
+    </ul>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+/* ============ 工具函数 ============ */
+const $ = id => document.getElementById(id);
+const video = $('video');
+function toast(msg, ms){ const t=$('toast'); t.textContent=msg; t.style.display='block';
+  clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none', ms||3200); }
+function status(msg, cls){ const s=$('status'); s.textContent=msg; s.className='status'+(cls?' '+cls:''); }
+function fmtT(s){ s=Math.max(0,s|0); const m=(s/60)|0; return m+':'+String(s%60).padStart(2,'0'); }
+function fmtSrt(s){ const ms=Math.max(0,Math.round(s*1000)); const h=(ms/3600000)|0,
+  m=((ms/60000)|0)%60, sec=(ms/1000)%60, mil=ms%1000;
+  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0')+','+String(mil).padStart(3,'0'); }
+
+/* ============ 设置持久化 ============ */
+const SET_KEY='msh_settings', TR_CACHE='msh_tr_cache';
+const settings = { model:'Xenova/whisper-tiny', lang:'en', chunk:10, engine:'google', sl:'auto',
+  apiBase:'', apiKey:'', apiModel:'', mode:'both', fontSize:19, offset:0 };
+try{ Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY)||'{}')); }catch(e){}
+function saveSettings(){ localStorage.setItem(SET_KEY, JSON.stringify(settings)); }
+$('modelSel').value=settings.model; $('langSel').value=settings.lang; $('chunkSel').value=String(settings.chunk);
+$('engineSel').value=settings.engine; $('slSel').value=settings.sl;
+$('apiBase').value=settings.apiBase; $('apiKey').value=settings.apiKey; $('apiModel').value=settings.apiModel;
+$('modeSel').value=settings.mode; $('fontSize').value=settings.fontSize; $('offset').value=settings.offset;
+function applyDisp(){
+  document.documentElement.style.setProperty('--subsize', settings.fontSize+'px');
+  $('fsVal').textContent=settings.fontSize; $('offVal').textContent=(settings.offset/1000).toFixed(1)+'s';
+}
+applyDisp();
+$('modelSel').onchange=e=>{ settings.model=e.target.value; saveSettings(); asrPipeline=null; status('模型已切换，将在下次开始识别时加载。','warn'); };
+$('langSel').onchange=e=>{ settings.lang=e.target.value; saveSettings(); };
+$('chunkSel').onchange=e=>{ settings.chunk=parseFloat(e.target.value); saveSettings(); };
+$('engineSel').onchange=e=>{ settings.engine=e.target.value; saveSettings(); $('apiBox').style.display = e.target.value==='custom'?'block':'none'; };
+$('apiBox').style.display = settings.engine==='custom'?'block':'none';
+$('slSel').onchange=e=>{ settings.sl=e.target.value; saveSettings(); };
+$('apiBase').onchange=e=>{ settings.apiBase=e.target.value.trim(); saveSettings(); };
+$('apiKey').onchange=e=>{ settings.apiKey=e.target.value.trim(); saveSettings(); };
+$('apiModel').onchange=e=>{ settings.apiModel=e.target.value.trim(); saveSettings(); };
+$('modeSel').onchange=e=>{ settings.mode=e.target.value; saveSettings(); };
+$('fontSize').oninput=e=>{ settings.fontSize=parseFloat(e.target.value); saveSettings(); applyDisp(); };
+$('offset').oninput=e=>{ settings.offset=parseFloat(e.target.value); saveSettings(); applyDisp(); };
+
+/* ============ 打开视频（m3u8 / mp4） ============ */
+let hls=null, urlCurrent='', tryingCors=false;
+function destroyHls(){ if(hls){ try{hls.destroy();}catch(e){} hls=null; } }
+function openUrl(u){
+  u=(u||'').trim(); if(!u) return toast('请输入视频直链');
+  if(!/^https?:\/\//i.test(u)) u='https://'+u;
+  urlCurrent=u; tryingCors=false;
+  destroyHls();
+  video.removeAttribute('crossorigin');
+  if(/\.m3u8(\?|#|$)/i.test(u)){
+    if(window.Hls && Hls.isSupported()){
+      hls=new Hls({ maxBufferLength:30 });
+      hls.on(Hls.Events.ERROR,(e,d)=>{ if(d.fatal) status('视频加载失败：可能被站点防盗链/跨域拦截（'+(d.details||d.type)+'），可尝试换播放源。','err'); });
+      hls.loadSource(u); hls.attachMedia(video);
+      status('已加载 m3u8（hls.js，音频可捕获）。');
+    }else{
+      video.src=u; // iOS 回退系统播放器：跨域视频可能无法捕获声音，见 FAQ
+      status('使用系统播放器加载 m3u8。若后续检测不到声音，请用麦克风拾音。','warn');
+    }
+  }else{
+    tryingCors=true; video.crossOrigin='anonymous'; video.src=u; // 先尝试跨域模式，失败自动降级
+    status('已加载视频直链。');
+  }
+  video.play().catch(()=>{});
+}
+$('btnOpen').onclick=()=>openUrl($('urlInput').value);
+$('urlInput').addEventListener('keydown',e=>{ if(e.key==='Enter') openUrl($('urlInput').value); });
+video.addEventListener('error',()=>{ // mp4 跨域加载失败 → 去掉 crossorigin 重试
+  if(tryingCors && urlCurrent){ tryingCors=false; video.removeAttribute('crossorigin');
+    video.src=urlCurrent; video.play().catch(()=>{});
+    toast('跨域模式失败，已用普通模式重试（声音可能无法捕获）。'); }
+},true);
+
+/* hls.js 主源（jsdelivr）加载失败时，自动补国内备用源 */
+setTimeout(function(){
+  if(!window.Hls){
+    var s=document.createElement('script');
+    s.src='https://registry.npmmirror.com/hls.js/1.5.17/files/dist/hls.min.js';
+    document.head.appendChild(s);
+  }
+},2500);
+
+/* ============ 音频捕获（AudioWorklet） ============ */
+const workletCode = `
+class CaptureProcessor extends AudioWorkletProcessor{
+  constructor(){ super(); this.buf=new Float32Array(8192); this.n=0; }
+  process(inputs){
+    const ch=inputs[0]&&inputs[0][0];
+    if(ch){ for(let i=0;i<ch.length;i++){ this.buf[this.n++]=ch[i];
+      if(this.n===this.buf.length){ this.port.postMessage(this.buf.slice(0)); this.n=0; } } }
+    return true;
+  }
+}
+registerProcessor('capture-processor', CaptureProcessor);`;
+
+let ctx=null, srcNode=null, analyser=null, workletNode=null, micNode=null, micStream=null, micMode=false;
+let rawChunks=[], totalRaw=0, sr=48000, levelBuf=null;
+const rec = { active:false, startVideoTime:0, processedRaw:0, chunkTimer:null };
+
+async function ensureGraph(){
+  if(ctx) { await ctx.resume(); return; }
+  ctx = new (window.AudioContext||window.webkitAudioContext)();
+  sr = ctx.sampleRate;
+  const wUrl = URL.createObjectURL(new Blob([workletCode],{type:'application/javascript'}));
+  await ctx.audioWorklet.addModule(wUrl);              // 注册音频捕获处理器（必须先于创建节点）
+  srcNode = ctx.createMediaElementSource(video);       // 同元素只能创建一次
+  analyser = ctx.createAnalyser(); analyser.fftSize=2048;
+  levelBuf = new Float32Array(analyser.fftSize);
+  srcNode.connect(analyser);
+  srcNode.connect(ctx.destination);                    // 保持正常出声
+  workletNode = new AudioWorkletNode(ctx,'capture-processor');
+  workletNode.port.onmessage = e=>onAudioData(e.data);
+  srcNode.connect(workletNode);
+}
+function detachAllSources(){
+  try{ srcNode.disconnect(); }catch(e){}
+  try{ micNode&&micNode.disconnect(); }catch(e){}
+}
+function connectCapture(node){
+  detachAllSources();
+  node.connect(analyser);
+  if(!micMode) node.connect(ctx.destination);          // 麦克风模式不回放，避免啸叫
+  node.connect(workletNode);
+}
+async function setMicMode(on){
+  if(on){
+    micStream = await navigator.mediaDevices.getUserMedia({audio:{ echoCancellation:false, noiseSuppression:false }});
+    micNode = ctx.createMediaStreamSource(micStream);
+    micMode=true; connectCapture(micNode);
+    $('btnMic').textContent='麦克风拾音：开'; $('btnMic').classList.add('primary');
+    resetRecClock(); toast('麦克风拾音已开启：请让设备靠近声源');
+  }else{
+    if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+    micNode=null; micMode=false; connectCapture(srcNode);
+    $('btnMic').textContent='麦克风拾音：关'; $('btnMic').classList.remove('primary');
+    resetRecClock();
+  }
+}
+$('btnMic').onclick=async()=>{ try{ await ensureGraph(); await setMicMode(!micMode); }catch(e){ toast('麦克风开启失败：'+e.message); } };
+$('btnMicFromBanner').onclick=async()=>{ try{ await ensureGraph(); await setMicMode(true); hideBanner(); }catch(e){ toast('麦克风开启失败：'+e.message); } };
+
+function onAudioData(f32){
+  if(!rec.active) return;
+  rawChunks.push(f32); totalRaw += f32.length;
+}
+/* 按原始采样区间切片并重采样到 16kHz（Whisper 输入要求） */
+function slice16k(startRaw, endRaw){
+  const len=endRaw-startRaw;
+  const raw=new Float32Array(len);
+  let base=0, g=0;
+  for(const c of rawChunks){
+    const cEnd=base+c.length;
+    const s=Math.max(startRaw,base), e=Math.min(endRaw,cEnd);
+    if(e>s){ raw.set(c.subarray(s-base, e-base), g); g+=(e-s); }
+    base=cEnd;
+    if(base>=endRaw) break;
+  }
+  if(sr===16000) return raw;
+  const ratio=sr/16000, outLen=Math.floor(len/ratio), out=new Float32Array(outLen);
+  for(let i=0;i<outLen;i++){ const p=i*ratio, i0=p|0, fr=p-i0;
+    const a=raw[i0]||0, b=raw[i0+1]||0; out[i]=a+(b-a)*fr; }
+  return out;
+}
+/* 丢弃已处理完的旧音频块，控制内存占用 */
+function pruneRawSafe(){
+  const keepFrom=Math.max(0, rec.processedRaw - 25*sr);
+  let base=0, i=0;
+  while(i<rawChunks.length){ const c=rawChunks[i]; if(base+c.length<=keepFrom){ base+=c.length; i++; } else break; }
+  if(i>0) rawChunks=rawChunks.slice(i);
+}
+function resetRecClock(){
+  rawChunks=[]; totalRaw=0; rec.processedRaw=0;
+  rec.startVideoTime=video.currentTime||0;
+}
+video.addEventListener('seeked',()=>{ if(rec.active) resetRecClock(); });
+
+/* ============ Whisper 识别（transformers.js 本地推理） ============ */
+let asrPipeline=null, asrBusy=false, asrQueue=[], transformersMod=null;
+async function ensureModel(){
+  if(asrPipeline) return;
+  status('正在加载识别引擎（首次需下载模型，请保持网络畅通）…');
+  if(!transformersMod){
+    // 多源回退：jsdelivr → npmmirror（国内）→ fastly → unpkg
+    const CDNS=[
+      'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js',
+      'https://registry.npmmirror.com/@huggingface/transformers/3.3.3/files/dist/transformers.min.js',
+      'https://fastly.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js',
+      'https://unpkg.com/@huggingface/transformers@3.3.3/dist/transformers.min.js'
+    ];
+    let lastErr=null;
+    for(const u of CDNS){
+      try{ transformersMod=await import(u); break; }catch(e){ lastErr=e; }
+    }
+    if(!transformersMod) throw new Error('识别引擎加载失败，请检查手机网络（'+((lastErr&&lastErr.message)||'')+'）');
+    const env=transformersMod.env;
+    env.allowLocalModels=false;
+    env.remoteHost='https://hf-mirror.com';            // 模型下载走国内镜像（huggingface.co 直连不畅）
+    try{ // ONNX 运行时文件也改走国内镜像
+      const wp=String(env.backends.onnx.wasm.wasmPaths||'');
+      const m=wp.match(/^https:\/\/cdn\.jsdelivr\.net\/npm\/(@?[^@]+)@([^/]+)\/(.*)$/);
+      if(m) env.backends.onnx.wasm.wasmPaths='https://registry.npmmirror.com/'+m[1]+'/'+m[2]+'/files/'+m[3];
+    }catch(e){}
+  }
+  asrPipeline = await transformersMod.pipeline('automatic-speech-recognition', settings.model, {
+    dtype:'q8',
+    progress_callback:p=>{ if(p.status==='progress'&&p.total) status('模型下载 '+Math.round(p.loaded/p.total*100)+'% …'); }
+  });
+  status('模型就绪。','ok');
+}
+const isEnModel = m => /\.en$/.test(m);
+async function runASR(audio16k, tStart){
+  asrBusy=true;
+  try{
+    const opts={ return_timestamps:true };
+    if(!isEnModel(settings.model) && settings.lang!=='auto'){ opts.language=settings.lang; opts.task='transcribe'; }
+    const out=await asrPipeline(audio16k, opts);
+    handleTranscript(out, tStart);
+    status('识别运行中（'+settings.chunk+'s/段）…','ok');
+  }catch(err){ status('识别出错：'+err.message,'err'); }
+  asrBusy=false;
+  if(asrQueue.length){ const next=asrQueue.shift(); runASR(next.audio, next.t); }
+}
+function handleTranscript(out, tStart){
+  const chunks=(out&&out.chunks)||[];
+  if(!chunks.length && out&&out.text){ chunks.push({timestamp:[0,settings.chunk], text:out.text}); }
+  for(const c of chunks){
+    let s=c.timestamp&&c.timestamp[0]!=null?c.timestamp[0]:0;
+    let e=c.timestamp&&c.timestamp[1]!=null?c.timestamp[1]:s+3;
+    if(s>=settings.chunk-0.15) continue;               // 丢弃重叠区，避免重复
+    const text=String(c.text||'').replace(/\s+/g,' ').trim();
+    if(!text || text==='.'||text==='谢谢观看。') continue;
+    addLine(tStart+s, tStart+Math.min(e,settings.chunk+0.5), text);
+  }
+}
+
+/* ============ 字幕行管理与显示 ============ */
+const lines=[]; const pending=[];
+function addLine(t0,t1,orig){
+  const last=lines[lines.length-1];
+  if(last && last.orig===orig && t0-last.t1<1.2){ last.t1=t1; return; }   // 合并重复
+  const line={ t0, t1, orig, zh:null, el:null };
+  lines.push(line); pending.push(line);
+  renderListItem(line);
+}
+function renderListItem(line){
+  const div=document.createElement('div'); div.className='line';
+  div.innerHTML='<span class="t">'+fmtT(line.t0)+'</span><div class="o"></div><div class="z"></div>';
+  div.querySelector('.o').textContent=line.orig;
+  line.el=div; $('linesList').prepend(div);
+}
+function renderLineZh(line){
+  if(line.el) line.el.querySelector('.z').textContent=line.zh||'…';
+}
+setInterval(()=>{ // 字幕显示循环
+  const cur=video.currentTime + settings.offset/1000;
+  let hit=null;
+  for(let i=lines.length-1;i>=0;i--){ const L=lines[i];
+    if(L.t0<=cur && cur<L.t1){ hit=L; break; } if(L.t1<cur-30) break; }
+  const o=$('subOrig'), z=$('subZh');
+  if(hit){
+    const showOrig = settings.mode!=='zh';
+    const zh = hit.zh!=null?hit.zh:(settings.sl.startsWith('zh')?hit.orig:null);
+    if(settings.mode==='orig'){ o.textContent=hit.orig; o.style.display='block'; z.style.display='none'; }
+    else if(zh){ if(showOrig){ o.textContent=hit.orig; o.style.display='block'; } else o.style.display='none';
+      z.textContent=zh; z.style.display='block'; }
+    else { o.textContent=hit.orig; o.style.display='block'; z.style.display='none'; } // 译文未到，先显示原文
+  } else { o.style.display='none'; z.style.display='none'; }
+}, 200);
+
+/* ============ 翻译（多引擎 + 缓存 + 失败降级） ============ */
+let trCache={}; try{ trCache=JSON.parse(localStorage.getItem(TR_CACHE)||'{}'); }catch(e){}
+function cacheGet(k){ return trCache[k]; }
+function cacheSet(k,v){ trCache[k]=v; if(Object.keys(trCache).length>4000){ trCache={}; }
+  localStorage.setItem(TR_CACHE, JSON.stringify(trCache)); }
+
+async function translateGoogle(texts, sl){
+  const q=texts.join('\n');
+  const url='https://translate.googleapis.com/translate_a/single?client=gtx&sl='+(sl||'auto')+'&tl=zh-CN&dt=t&q='+encodeURIComponent(q);
+  const r=await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status);
+  const d=await r.json();
+  const full=(d[0]||[]).map(x=>x[0]).join('');
+  const parts=full.split('\n').map(s=>s.trim()).filter(Boolean);
+  if(parts.length===texts.length) return parts;
+  // 行数不齐时逐条补翻
+  const res=[];
+  for(const t of texts){ res.push(await translateGoogleOne(t, sl)); }
+  return res;
+}
+async function translateGoogleOne(text, sl){
+  const url='https://translate.googleapis.com/translate_a/single?client=gtx&sl='+(sl||'auto')+'&tl=zh-CN&dt=t&q='+encodeURIComponent(text);
+  const r=await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status);
+  const d=await r.json(); return ((d[0]||[]).map(x=>x[0]).join('')||'').trim();
+}
+async function translateMyMemory(texts, sl){
+  const res=[];
+  for(const t of texts){
+    const lp=(sl&&sl!=='auto'?sl:'en')+'|zh-CN';
+    const r=await fetch('https://api.mymemory.translated.net/get?q='+encodeURIComponent(t)+'&langpair='+lp);
+    const d=await r.json();
+    res.push((d.responseData&&d.responseData.translatedText||'').trim());
+  }
+  return res;
+}
+async function translateCustom(texts){
+  if(!settings.apiBase||!settings.apiKey) throw new Error('请先填写自定义 API 地址和 Key');
+  const r=await fetch(settings.apiBase.replace(/\/+$/,'')+'/chat/completions',{
+    method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+settings.apiKey},
+    body:JSON.stringify({ model:settings.apiModel||'gpt-4o-mini', temperature:0,
+      messages:[
+        {role:'system',content:'你是影视字幕翻译引擎。将用户发来的每一行原文翻译成简体中文。要求：输出行数与输入完全一致，每行一条译文，不要编号、不要解释、不要合并行。'},
+        {role:'user',content:texts.join('\n')}
+      ]})});
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const d=await r.json();
+  return (d.choices[0].message.content||'').trim().split('\n').map(s=>s.replace(/^\d+[.、:：]\s*/,'').trim());
+}
+let trTimer=null;
+function flushTranslate(){
+  if(!pending.length) return;
+  const batch=pending.splice(0,10);
+  (async()=>{
+    const texts=batch.map(l=>l.orig);
+    const sl=settings.sl;
+    const keys=texts.map(t=>settings.engine+'|'+sl+'|'+t);
+    const cands=[];
+    for(let i=0;i<texts.length;i++){ const v=cacheGet(keys[i]); if(v!=null) cands[i]=v; }
+    const needIdx=[]; for(let i=0;i<texts.length;i++) if(cands[i]==null) needIdx.push(i);
+    if(needIdx.length){
+      const needTexts=needIdx.map(i=>texts[i]);
+      let res=null, eng=settings.engine;
+      for(let attempt=0; attempt<2 && !res; attempt++){
+        try{
+          if(eng==='google') res=await translateGoogle(needTexts, sl);
+          else if(eng==='mymemory') res=await translateMyMemory(needTexts, sl);
+          else res=await translateCustom(needTexts);
+        }catch(err){
+          if(attempt===0){ eng = eng==='custom'?'google':'mymemory'; toast('翻译引擎不可用，已切换备用引擎'); }
+          else toast('翻译失败：'+err.message);
+        }
+      }
+      if(res){
+        needIdx.forEach((idx,k)=>{ const v=(res[k]||'').trim(); cands[idx]=v||texts[idx]; cacheSet(keys[idx],cands[idx]); });
+      }
+    }
+    batch.forEach((l,i)=>{ l.zh=cands[i]||''; renderLineZh(l); });
+  })();
+}
+trTimer=setInterval(flushTranslate, 900);
+
+/* ============ 分段调度 + 静音检测 + 音量条 ============ */
+let silentSec=0, bannerShown=false;
+function hideBanner(){ $('banner').style.display='none'; bannerShown=false; }
+function tick(){
+  if(!rec.active) return;
+  const needRaw=settings.chunk*sr;
+  if(totalRaw - rec.processedRaw >= needRaw){
+    const start=Math.max(0, rec.processedRaw - Math.min(1*sr, rec.processedRaw)); // 1s 重叠
+    const end=rec.processedRaw + needRaw;
+    const audio=slice16k(start, end);
+    const tStart=rec.startVideoTime + start/sr;
+    rec.processedRaw=end;
+    pruneRawSafe();
+    if(asrQueue.length>3) asrQueue.shift();            // 处理跟不上时丢弃最旧段
+    if(asrBusy) asrQueue.push({audio, t:tStart});
+    else runASR(audio, tStart);
+  }
+  // 音量条
+  if(analyser){
+    analyser.getFloatTimeDomainData(levelBuf);
+    let sum=0; for(let i=0;i<levelBuf.length;i++) sum+=levelBuf[i]*levelBuf[i];
+    const rms=Math.sqrt(sum/levelBuf.length);
+    const bars=Math.max(0,Math.min(10,Math.round(rms*160)));
+    $('level').textContent='输入音量 '+'▮'.repeat(bars)+'▯'.repeat(10-bars);
+    if(!micMode && rec.active && !video.paused){
+      if(rms<0.004){ silentSec++; if(silentSec>=6 && !bannerShown){ $('banner').style.display='block'; bannerShown=true; } }
+      else { silentSec=0; if(bannerShown && rms>0.01) hideBanner(); }
+    }
+  }
+}
+
+/* ============ 开始/停止 ============ */
+let wakeLock=null;
+$('btnStart').onclick=async()=>{
+  if(!video.currentSrc && !video.src) return toast('请先打开视频直链并播放');
+  $('btnStart').disabled=true;
+  try{
+    await ensureGraph();
+    ctx.resume();
+    if(!micMode) connectCapture(srcNode);
+    await ensureModel();
+    resetRecClock();
+    rec.active=true;
+    rec.chunkTimer=setInterval(tick,1000);
+    try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){}
+    status('识别运行中（'+settings.chunk+'s/段）…','ok');
+  }catch(err){
+    const m=(err&&err.message)||String(err);
+    let hint='';
+    if(/fetch|import|network|load|Failed/i.test(m))
+      hint=' → 多为网络问题：识别引擎/模型需联网下载（已走国内镜像），请确认网络后重试';
+    status('启动失败：'+((err&&err.name)||'')+': '+m+hint,'err');
+  }
+  $('btnStart').disabled=false;
+};
+$('btnStop').onclick=()=>{
+  rec.active=false; clearInterval(rec.chunkTimer); asrQueue=[];
+  if(wakeLock){ try{wakeLock.release();}catch(e){} wakeLock=null; }
+  status('已停止。','warn');
+};
+
+/* ============ 导出 / 清空 ============ */
+$('btnExport').onclick=()=>{
+  if(!lines.length) return toast('暂无字幕记录');
+  let srt='', n=1;
+  for(const L of lines){
+    const zh=(L.zh&&L.zh.trim())||L.orig;
+    srt+=n+'\n'+fmtSrt(L.t0)+' --> '+fmtSrt(L.t1)+'\n'+zh+'\n'+(settings.mode==='zh'?'':L.orig+'\n')+'\n';
+    n++;
+  }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([srt],{type:'text/plain'}));
+  a.download='subtitles.srt'; a.click();
+};
+$('btnClear').onclick=()=>{ lines.length=0; pending.length=0; $('linesList').innerHTML='';
+  $('subOrig').style.display='none'; $('subZh').style.display='none'; };
+
+/* ============ 书签脚本 ============ */
+const bookmarklet = "javascript:(function(){var s=new Set(),push=function(u){if(u&&/^https?:|\\/\\//.test(u)){u=u.replace(/^\\/\\//,location.protocol+'//');if(/\\.(m3u8|mp4)(\\?|#|$)/i.test(u)||/m3u8/i.test(u))s.add(u);}};document.querySelectorAll('video,source,audio').forEach(function(e){push(e.src||e.currentSrc)});try{performance.getEntriesByType('resource').forEach(function(e){push(e.name)})}catch(e){};var html;try{html=document.documentElement.innerHTML}catch(e){}if(html){var m=html.match(/https?:\\/\\/[^\"'\\\\\\s<>]+?\\.(m3u8|mp4)[^\"'\\\\\\s<>]*/gi);if(m)m.forEach(push)}var out=[...s];if(!out.length){alert('未找到视频直链：请先点击播放再运行本脚本；若播放器在跨域 iframe 内则无法提取');return}var best=out.find(function(u){return /\\.m3u8/i.test(u)})||out[0];var list='已复制直链：\\n'+best+'\\n\\n共 '+out.length+' 条候选：\\n'+out.slice(0,10).join('\\n');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(best).then(function(){alert(list)},function(){prompt('视频直链（手动复制）：',best)})}else{prompt('视频直链（手动复制）：',best)}})();";
+$('bmText').value=bookmarklet;
+$('btnCopyBm').onclick=()=>{
+  const done=()=>toast('脚本已复制，去浏览器书签里粘贴到「网址」栏');
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(bookmarklet).then(done,()=>fallbackCopy());
+  else fallbackCopy();
+  function fallbackCopy(){ const ta=$('bmText'); ta.removeAttribute('readonly'); ta.select();
+    try{ document.execCommand('copy'); done(); }catch(e){ toast('请手动全选复制'); }
+    ta.setAttribute('readonly',''); }
+};
+
+/* 恢复上次直链 */
+if(localStorage.getItem('msh_lasturl')){ $('urlInput').value=localStorage.getItem('msh_lasturl'); }
+$('btnOpen').addEventListener('click',()=>localStorage.setItem('msh_lasturl',$('urlInput').value.trim()));
+</script>
+</body>
+</html>
