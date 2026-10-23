@@ -449,11 +449,19 @@ async function ensureModel(){
     if(!transformersMod) throw new Error('全部引擎源加载失败 → ['+tried.join(' | ')+']');
     const env=transformersMod.env;
     env.allowLocalModels=false;
-    env.remoteHost='https://hf-mirror.com';            // 模型下载走国内镜像（huggingface.co 直连不畅）
+    if(settings.model==='Xenova/whisper-tiny'){
+      // whisper-tiny 模型已内置在仓库中，与页面同源直连，不依赖任何外站
+      env.remoteHost = location.origin + '/';
+      env.remotePathTemplate = location.pathname.replace(/[^\/]*$/,'').replace(/^\//,'') + 'model/whisper-tiny/';
+    } else {
+      env.remoteHost='https://hf-mirror.com';            // 其他型号走国内镜像
+      env.remotePathTemplate='{model}/resolve/{revision}/';
+    }
     try{ // ONNX 运行时 wasm 同源自托管（仓库 engine/ 目录）
       env.backends.onnx.wasm.wasmPaths = new URL('engine/', location.href).href;
     }catch(e){}
   }
+  status('开始加载模型（'+(settings.model==='Xenova/whisper-tiny'?'内置直连源':'镜像源')+'）…');
   asrPipeline = await transformersMod.pipeline('automatic-speech-recognition', settings.model, {
     dtype:'q8',
     progress_callback:p=>{ if(p.status==='progress'&&p.total) status('模型下载 '+Math.round(p.loaded/p.total*100)+'% …'); }
