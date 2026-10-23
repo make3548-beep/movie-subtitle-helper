@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.1 智谱云端识别</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.2 修复无声</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -87,7 +87,7 @@
       <div id="subOverlay"><div id="subOrig"></div><div id="subZh"></div></div>
     </div>
     <div id="banner">
-      检测不到视频声音（该直链受跨域限制）。可切换「麦克风拾音」模式：让手机麦克风对着声音来源继续识别，效果受环境影响。
+      检测不到视频声音（该直链受跨域限制）。建议换一个播放源；或切「麦克风拾音」让麦克风对着声源继续识别，效果受环境影响。
       <br><button id="btnMicFromBanner" class="primary">切换麦克风拾音</button>
     </div>
   </div>
@@ -127,6 +127,8 @@
     <div id="cloudBox">
       <label class="fld">智谱 API Key（注册送额度，Key 只存本机）</label>
       <input type="password" id="asrKey" style="width:100%" placeholder="粘贴智谱 API 密钥">
+      <label class="fld">云端模型名</label>
+      <input type="text" id="asrModel" style="width:100%" placeholder="glm-asr">
       <div class="hint">没有 Key？打开 <a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" rel="noopener">open.bigmodel.cn（智谱开放平台）</a> → 手机号注册 → 「API 密钥」→ 新建并复制，粘贴到上面。云端识别零下载，约 1～2 秒出一句话，中英文效果最佳。</div>
     </div>
     <div id="localBox" style="display:none">
@@ -250,7 +252,7 @@
     <h2 style="color:var(--acc)">常见问题与限制</h2>
     <ul>
       <li><b>直链被防盗链/跨域拦截</b>：部分网站直链需要特定来源（Referer）才能访问，会加载失败，属于站点限制，可换播放源。</li>
-      <li><b>iOS 版本</b>：直链为 m3u8 时需 iOS 17.1+（支持 Managed Media Source），否则回退系统播放器，跨域视频将无法捕获声音（可用麦克风拾音兜底）。Android Chrome 无此限制。</li>
+      <li><b>iOS 版本</b>：直链为 m3u8 时需 iOS 17.1+（支持 Managed Media Source）。iPhone 浏览器拿不到视频内部声音，开始识别会自动切到麦克风拾音（视频照常出声），请保持外放音量。Android Chrome 无此限制。</li>
       <li><b>延迟</b>：云端识别约 1～2 秒出一句；本地模式 10 秒音频约需 2～8 秒处理，字幕会滞后一小段，可用「偏移」微调显示时机。</li>
       <li><b>准确率</b>：云端 GLM-ASR 中英文识别准确率高、自动区分语言，远超本地小模型；本地模式对嘈杂/音乐背景识别较一般，英语内容建议选英语专用模型。</li>
       <li><b>云端 Key</b>：使用智谱开放平台语音识别 API（open.bigmodel.cn 手机号注册即送额度），Key 只保存在你手机本地，不会经过其他第三方。</li>
@@ -276,11 +278,11 @@ function fmtSrt(s){ const ms=Math.max(0,Math.round(s*1000)); const h=(ms/3600000
 
 /* ============ 设置持久化 ============ */
 const SET_KEY='msh_settings', TR_CACHE='msh_tr_cache';
-const settings = { asrMode:'cloud', asrKey:'', model:'Xenova/whisper-tiny', lang:'en', chunk:10,
+const settings = { asrMode:'cloud', asrKey:'', asrModel:'glm-asr', model:'Xenova/whisper-tiny', lang:'en', chunk:10,
   engine:'google', sl:'auto', apiBase:'', apiKey:'', apiModel:'', mode:'both', fontSize:19, offset:0 };
 try{ Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY)||'{}')); }catch(e){}
 function saveSettings(){ localStorage.setItem(SET_KEY, JSON.stringify(settings)); }
-$('asrModeSel').value=settings.asrMode; $('asrKey').value=settings.asrKey;
+$('asrModeSel').value=settings.asrMode; $('asrKey').value=settings.asrKey; $('asrModel').value=settings.asrModel;
 $('modelSel').value=settings.model; $('langSel').value=settings.lang; $('chunkSel').value=String(settings.chunk);
 $('engineSel').value=settings.engine; $('slSel').value=settings.sl;
 $('apiBase').value=settings.apiBase; $('apiKey').value=settings.apiKey; $('apiModel').value=settings.apiModel;
@@ -308,6 +310,7 @@ applyAsrMode();
 $('asrModeSel').onchange=e=>{ settings.asrMode=e.target.value; saveSettings(); applyAsrMode();
   status(e.target.value==='cloud'?'已切换云端识别：填好 Key 后点「开始识别」，零下载约 1～2 秒出一句。':'已切换本地识别：首次开始时需下载模型（约45MB）。','warn'); };
 $('asrKey').onchange=e=>{ settings.asrKey=e.target.value.trim(); saveSettings(); if(settings.asrKey) toast('API Key 已保存（仅存本机）'); };
+$('asrModel').onchange=e=>{ settings.asrModel=e.target.value.trim()||'glm-asr'; saveSettings(); };
 
 /* ============ 打开视频（m3u8 / mp4） ============ */
 let hls=null, urlCurrent='', tryingCors=false;
@@ -371,42 +374,45 @@ let ctx=null, srcNode=null, analyser=null, workletNode=null, micNode=null, micSt
 let rawChunks=[], totalRaw=0, sr=48000, levelBuf=null;
 const rec = { active:false, startVideoTime:0, processedRaw:0, chunkTimer:null };
 
+const IOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
 async function ensureGraph(){
-  if(ctx) { await ctx.resume(); return; }
-  ctx = new (window.AudioContext||window.webkitAudioContext)();
-  sr = ctx.sampleRate;
-  const wUrl = URL.createObjectURL(new Blob([workletCode],{type:'application/javascript'}));
-  await ctx.audioWorklet.addModule(wUrl);              // 注册音频捕获处理器（必须先于创建节点）
-  srcNode = ctx.createMediaElementSource(video);       // 同元素只能创建一次
-  analyser = ctx.createAnalyser(); analyser.fftSize=2048;
-  levelBuf = new Float32Array(analyser.fftSize);
-  srcNode.connect(analyser);
-  srcNode.connect(ctx.destination);                    // 保持正常出声
-  workletNode = new AudioWorkletNode(ctx,'capture-processor');
-  workletNode.port.onmessage = e=>onAudioData(e.data);
-  srcNode.connect(workletNode);
+  if(!ctx){
+    ctx = new (window.AudioContext||window.webkitAudioContext)();
+    sr = ctx.sampleRate;
+    const wUrl = URL.createObjectURL(new Blob([workletCode],{type:'application/javascript'}));
+    await ctx.audioWorklet.addModule(wUrl);            // 注册音频捕获处理器（必须先于创建节点）
+    analyser = ctx.createAnalyser(); analyser.fftSize=2048;
+    levelBuf = new Float32Array(analyser.fftSize);
+    workletNode = new AudioWorkletNode(ctx,'capture-processor');
+    workletNode.port.onmessage = e=>onAudioData(e.data);
+  }
+  await ctx.resume();
+  if(!srcNode && !IOS){ // iOS 上路由视频声音会直接静音，只能走麦克风；同元素只能创建一次
+    try{ srcNode = ctx.createMediaElementSource(video); }catch(e){ srcNode=null; }
+  }
 }
 function detachAllSources(){
-  try{ srcNode.disconnect(); }catch(e){}
+  try{ srcNode&&srcNode.disconnect(); }catch(e){}
   try{ micNode&&micNode.disconnect(); }catch(e){}
 }
-function connectCapture(node){
+function connectCapture(){
   detachAllSources();
-  node.connect(analyser);
-  node.connect(workletNode);
-  if(!micMode){ node.connect(ctx.destination); }   // 视频模式：捕获 + 正常出声
-  else { srcNode.connect(ctx.destination); }       // 麦克风模式：视频继续出声，麦克风只收音不回放（防啸叫）
+  if(micMode && micNode){ micNode.connect(analyser); micNode.connect(workletNode); } // 麦克风只收音不回放（防啸叫）
+  if(srcNode){
+    if(!micMode){ srcNode.connect(analyser); srcNode.connect(workletNode); }
+    srcNode.connect(ctx.destination); // 视频照常出声
+  }
 }
 async function setMicMode(on){
   if(on){
     micStream = await navigator.mediaDevices.getUserMedia({audio:{ echoCancellation:false, noiseSuppression:false }});
     micNode = ctx.createMediaStreamSource(micStream);
-    micMode=true; connectCapture(micNode);
+    micMode=true; connectCapture();
     $('btnMic').textContent='麦克风拾音：开'; $('btnMic').classList.add('primary');
     resetRecClock(); toast('麦克风拾音已开启：请让设备靠近声源');
   }else{
     if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
-    micNode=null; micMode=false; connectCapture(srcNode);
+    micNode=null; micMode=false; connectCapture();
     $('btnMic').textContent='麦克风拾音：关'; $('btnMic').classList.remove('primary');
     resetRecClock();
   }
@@ -543,7 +549,7 @@ async function ensureModel(){
 }
 const isEnModel = m => /\.en$/.test(m);
 /* ===== 云端识别（智谱开放平台 OpenAI 兼容 /audio/transcriptions，模型 glm-asr） ===== */
-const ZP_ASR='https://open.bigmodel.cn/api/paas/v4/audio/transcriptions', ZP_MODEL='glm-asr';
+const ZP_ASR='https://open.bigmodel.cn/api/paas/v4/audio/transcriptions';
 function encodeWAV(f32){ // 16kHz 单声道 16bit PCM
   const n=f32.length, buf=new ArrayBuffer(44+n*2), v=new DataView(buf);
   const ws=(o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
@@ -558,7 +564,7 @@ async function cloudTranscribe(audio16k){
   if(!settings.asrKey) throw new Error('未填智谱 API Key');
   const fd=new FormData();
   fd.append('file', encodeWAV(audio16k), 'chunk.wav');
-  fd.append('model', ZP_MODEL);
+  fd.append('model', settings.asrModel||'glm-asr');
   let r;
   try{ r=await fetch(ZP_ASR,{ method:'POST', headers:{ Authorization:'Bearer '+settings.asrKey }, body:fd }); }
   catch(e){ throw new Error('网络请求失败（可能被跨域拦截或无网络）：'+e.message); }
@@ -757,7 +763,10 @@ $('btnStart').onclick=async()=>{
   try{
     await ensureGraph();
     ctx.resume();
-    if(!micMode) connectCapture(srcNode);
+    if(!srcNode && !micMode){ // iPhone 等：拿不到视频内部声音，自动转麦克风拾音（视频声音不受影响）
+      await setMicMode(true);
+      toast('已自动切换麦克风拾音：请保持手机外放音量');
+    } else if(!micMode){ connectCapture(); }
     if(settings.asrMode==='cloud'){
       if(!settings.asrKey) throw new Error('未填智谱 API Key —— 在上方「语音识别」卡片粘贴 Key（获取步骤见该卡片提示）');
     }else{
@@ -771,7 +780,9 @@ $('btnStart').onclick=async()=>{
   }catch(err){
     const m=(err&&err.message)||String(err);
     let hint='';
-    if(/fetch|import|network|load|Failed/i.test(m))
+    if(/NotAllowed|Permission/i.test(m))
+      hint=' → 麦克风/录音权限被拒绝，请在浏览器设置里允许';
+    else if(/fetch|import|network|load|Failed/i.test(m))
       hint=' → 多为网络问题：请重新打开本页（缓存可能过期）并确认网络后重试';
     status('启动失败：'+((err&&err.name)||'')+': '+m+hint,'err');
   }
