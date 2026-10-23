@@ -440,11 +440,13 @@ async function ensureModel(){
       'https://fastly.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js',
       'https://unpkg.com/@huggingface/transformers@3.3.3/dist/transformers.min.js'
     ];
-    let lastErr=null;
+    let lastErr=null; const tried=[];
     for(const u of CDNS){
-      try{ transformersMod=await import(u); break; }catch(e){ lastErr=e; }
+      const tag = u.indexOf('github.io')>=0 ? '内置' : u.split('/')[2];
+      try{ transformersMod=await import(u); tried.push(tag+':成功'); break; }
+      catch(e){ lastErr=e; tried.push(tag+':'+String((e&&e.message)||e).slice(0,60)); }
     }
-    if(!transformersMod) throw new Error('识别引擎加载失败，请检查手机网络（'+((lastErr&&lastErr.message)||'')+'）');
+    if(!transformersMod) throw new Error('全部引擎源加载失败 → ['+tried.join(' | ')+']');
     const env=transformersMod.env;
     env.allowLocalModels=false;
     env.remoteHost='https://hf-mirror.com';            // 模型下载走国内镜像（huggingface.co 直连不畅）
