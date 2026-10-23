@@ -80,6 +80,7 @@
       <input type="text" id="urlInput" class="grow" placeholder="粘贴 m3u8 / mp4 视频直链" autocapitalize="off" autocorrect="off">
       <button id="btnOpen" class="primary narrow">打开</button>
     </div>
+    <div class="hint">测试直链：<a href="#" onclick="openUrl('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8');return false">英语对白 m3u8</a> · <a href="#" onclick="openUrl('https://sf1-cdn-tos.huoshanstatic.com/obj/media-fe/xgplayer_doc_video/hls/xgplayer-demo.m3u8');return false">国内CDN m3u8</a> · <a href="#" onclick="openUrl('https://media.w3.org/2010/05/sintel/trailer.mp4');return false">mp4 短片</a></div>
     <div style="height:10px"></div>
     <div class="vwrap">
       <video id="video" controls playsinline preload="metadata"></video>
@@ -293,6 +294,9 @@ function openUrl(u){
   u=(u||'').trim(); if(!u) return toast('请输入视频直链');
   if(!/^https?:\/\//i.test(u)) u='https://'+u;
   urlCurrent=u; tryingCors=false;
+  if(!/\.m3u8(\?|#|$)/i.test(u) && !/\.(mp4|webm|mkv|flv|ts|m4v|mov|m4a|aac)(\?|#|$)/i.test(u)){
+    toast('这是网页地址而非视频直链，多半无法播放。请用「工具箱」书签脚本提取 m3u8/mp4 直链');
+  }
   destroyHls();
   video.removeAttribute('crossorigin');
   if(/\.m3u8(\?|#|$)/i.test(u)){
