@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 本地语音识别 → 自动翻译 → 双语字幕 · 全程手机本地运行</div>
+  <div class="sub">在线视频直链播放 → 本地语音识别 → 自动翻译 → 双语字幕 · 全程手机本地运行 · <b id="verTag">v3.2 引擎内置</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -371,8 +371,9 @@ function detachAllSources(){
 function connectCapture(node){
   detachAllSources();
   node.connect(analyser);
-  if(!micMode) node.connect(ctx.destination);          // 麦克风模式不回放，避免啸叫
   node.connect(workletNode);
+  if(!micMode){ node.connect(ctx.destination); }   // 视频模式：捕获 + 正常出声
+  else { srcNode.connect(ctx.destination); }       // 麦克风模式：视频继续出声，麦克风只收音不回放（防啸叫）
 }
 async function setMicMode(on){
   if(on){
@@ -647,7 +648,7 @@ $('btnStart').onclick=async()=>{
     const m=(err&&err.message)||String(err);
     let hint='';
     if(/fetch|import|network|load|Failed/i.test(m))
-      hint=' → 多为网络问题：识别引擎/模型需联网下载（已走国内镜像），请确认网络后重试';
+      hint=' → 多为网络问题：请重新打开本页（缓存可能过期）并确认网络后重试';
     status('启动失败：'+((err&&err.name)||'')+': '+m+hint,'err');
   }
   $('btnStart').disabled=false;
