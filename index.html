@@ -433,8 +433,13 @@ let asrPipeline=null, asrBusy=false, asrQueue=[], transformersMod=null;
 let modelCacheP=null;
 function openCache(){ if(!modelCacheP){ try{ modelCacheP=caches.open('msx-fastcache-v1'); }catch(e){ modelCacheP=Promise.reject(e); } } return modelCacheP; }
 let dlBytes={done:0,total:0,t0:0};
-function dlStatus(){ if(!dlBytes.total) return; const mb=d=>(d/1048576).toFixed(1);
-  status('模型下载 '+Math.round(dlBytes.done/dlBytes.total*100)+'% ('+mb(dlBytes.done)+'+'/'+mb(dlBytes.total)+'MB，8线程并行)…'); }
+function dlStatus(){
+  if(!dlBytes.total) return;
+  const pct=Math.round(dlBytes.done/dlBytes.total*100);
+  const a=(dlBytes.done/1048576).toFixed(1);
+  const b=(dlBytes.total/1048576).toFixed(1);
+  status('Model download '+pct+'% ('+a+'/'+b+' MB, 8 threads)...');
+}
 async function fastFetch(url){
   const probe=await fetch(url,{headers:{Range:'bytes=0-0'}});
   if(probe.status!==206){ return new Uint8Array(await (await fetch(url)).arrayBuffer()); }
