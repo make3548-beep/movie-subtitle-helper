@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.5 阿里云百炼</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.6 跨域无声根治</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -314,12 +314,12 @@ $('asrKey').onchange=e=>{ settings.asrKey=e.target.value.trim(); saveSettings();
 $('asrModel').onchange=e=>{ settings.asrModel=e.target.value.trim()||BL_MODEL; saveSettings(); };
 
 /* ============ 打开视频（m3u8 / mp4） ============ */
-let hls=null, urlCurrent='', tryingCors=false;
+let hls=null, urlCurrent='', tryingCors=false, tainted=false;
 function destroyHls(){ if(hls){ try{hls.destroy();}catch(e){} hls=null; } }
 function openUrl(u){
   u=(u||'').trim(); if(!u) return toast('请输入视频直链');
   if(!/^https?:\/\//i.test(u)) u='https://'+u;
-  urlCurrent=u; tryingCors=false;
+  urlCurrent=u; tryingCors=false; tainted=false;
   if(!/\.m3u8(\?|#|$)/i.test(u) && !/\.(mp4|webm|mkv|flv|ts|m4v|mov|m4a|aac)(\?|#|$)/i.test(u)){
     toast('这是网页地址而非视频直链，多半无法播放。请用「工具箱」书签脚本提取 m3u8/mp4 直链');
   }
@@ -332,8 +332,9 @@ function openUrl(u){
       hls.loadSource(u); hls.attachMedia(video);
       status('已加载 m3u8（hls.js，音频可捕获）。');
     }else{
+      tainted=true; // 系统播放器直连：跨域视频无法捕获声音，开始识别时自动走麦克风
       video.src=u; // iOS 回退系统播放器：跨域视频可能无法捕获声音，见 FAQ
-      status('使用系统播放器加载 m3u8。若后续检测不到声音，请用麦克风拾音。','warn');
+      status('使用系统播放器加载 m3u8。识别将自动使用麦克风拾音。','warn');
     }
   }else{
     tryingCors=true; video.crossOrigin='anonymous'; video.src=u; // 先尝试跨域模式，失败自动降级
@@ -343,10 +344,10 @@ function openUrl(u){
 }
 $('btnOpen').onclick=()=>openUrl($('urlInput').value);
 $('urlInput').addEventListener('keydown',e=>{ if(e.key==='Enter') openUrl($('urlInput').value); });
-video.addEventListener('error',()=>{ // mp4 跨域加载失败 → 去掉 crossorigin 重试
-  if(tryingCors && urlCurrent){ tryingCors=false; video.removeAttribute('crossorigin');
+video.addEventListener('error',()=>{ // mp4 跨域加载失败 → 去掉 crossorigin 重试，并标记为跨域受限
+  if(tryingCors && urlCurrent){ tryingCors=false; tainted=true; video.removeAttribute('crossorigin');
     video.src=urlCurrent; video.play().catch(()=>{});
-    toast('跨域模式失败，已用普通模式重试（声音可能无法捕获）。'); }
+    toast('该直链跨域受限，已用普通模式播放；开始识别会自动改用麦克风拾音。'); }
 },true);
 
 /* hls.js 主源（jsdelivr）加载失败时，自动补国内备用源 */
@@ -388,7 +389,7 @@ async function ensureGraph(){
     workletNode.port.onmessage = e=>onAudioData(e.data);
   }
   await ctx.resume();
-  if(!srcNode && !IOS){ // iOS 上路由视频声音会直接静音，只能走麦克风；同元素只能创建一次
+  if(!srcNode && !IOS && !tainted){ // iOS 及跨域受限直链：接管视频声音会静音，改走麦克风；同元素只能创建一次
     try{ srcNode = ctx.createMediaElementSource(video); }catch(e){ srcNode=null; }
   }
 }
@@ -765,7 +766,7 @@ $('btnStart').onclick=async()=>{
   try{
     await ensureGraph();
     ctx.resume();
-    if(!srcNode && !micMode){ // iPhone 等：拿不到视频内部声音，自动转麦克风拾音（视频声音不受影响）
+    if(!srcNode && !micMode){ // iPhone / 跨域受限直链：拿不到视频内部声音，自动转麦克风拾音（视频声音不受影响）
       await setMicMode(true);
       toast('已自动切换麦克风拾音：请保持手机外放音量');
     } else if(!micMode){ connectCapture(); }
