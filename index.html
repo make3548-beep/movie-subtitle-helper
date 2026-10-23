@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f1115">
 <title>观影字幕助手 · 在线视频自动识别+翻译字幕</title>
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<script src="hls.min.js"></script>
 <style>
   :root{
     --bg:#0f1115; --card:#171a21; --card2:#1d212b; --line:#2a2f3a;
@@ -327,7 +327,7 @@ video.addEventListener('error',()=>{ // mp4 跨域加载失败 → 去掉 crosso
 setTimeout(function(){
   if(!window.Hls){
     var s=document.createElement('script');
-    s.src='https://registry.npmmirror.com/hls.js/1.5.17/files/dist/hls.min.js';
+    s.src='https://fastly.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js';
     document.head.appendChild(s);
   }
 },2500);
@@ -432,10 +432,10 @@ async function ensureModel(){
   if(asrPipeline) return;
   status('正在加载识别引擎（首次需下载模型，请保持网络畅通）…');
   if(!transformersMod){
-    // 多源回退：jsdelivr → npmmirror（国内）→ fastly → unpkg
+    // 多源回退：同源自托管 → jsdelivr → fastly → unpkg
     const CDNS=[
+      new URL('engine/transformers.min.js', location.href).href,
       'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js',
-      'https://registry.npmmirror.com/@huggingface/transformers/3.3.3/files/dist/transformers.min.js',
       'https://fastly.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js',
       'https://unpkg.com/@huggingface/transformers@3.3.3/dist/transformers.min.js'
     ];
@@ -447,10 +447,8 @@ async function ensureModel(){
     const env=transformersMod.env;
     env.allowLocalModels=false;
     env.remoteHost='https://hf-mirror.com';            // 模型下载走国内镜像（huggingface.co 直连不畅）
-    try{ // ONNX 运行时文件也改走国内镜像
-      const wp=String(env.backends.onnx.wasm.wasmPaths||'');
-      const m=wp.match(/^https:\/\/cdn\.jsdelivr\.net\/npm\/(@?[^@]+)@([^/]+)\/(.*)$/);
-      if(m) env.backends.onnx.wasm.wasmPaths='https://registry.npmmirror.com/'+m[1]+'/'+m[2]+'/files/'+m[3];
+    try{ // ONNX 运行时 wasm 同源自托管（仓库 engine/ 目录）
+      env.backends.onnx.wasm.wasmPaths = new URL('engine/', location.href).href;
     }catch(e){}
   }
   asrPipeline = await transformersMod.pipeline('automatic-speech-recognition', settings.model, {
