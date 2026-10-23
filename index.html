@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.4 硅基流动免费</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.5 阿里云百炼</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -125,11 +125,11 @@
       </div>
     </div>
     <div id="cloudBox">
-      <label class="fld">硅基流动 API Key（完全免费，Key 只存本机）</label>
+      <label class="fld">阿里云百炼 API Key（注册送额度，不充值不扣费，Key 只存本机）</label>
       <input type="password" id="asrKey" style="width:100%" placeholder="sk-...">
       <label class="fld">云端模型名</label>
-      <input type="text" id="asrModel" style="width:100%" placeholder="FunAudioLLM/SenseVoiceSmall">
-      <div class="hint">没有 Key？打开 <a href="https://cloud.siliconflow.cn/account/ak" target="_blank" rel="noopener">cloud.siliconflow.cn</a> → 手机号注册 → 「API 密钥」→ 新建并复制，粘贴到上面。SenseVoice 完全免费，自动识别中英日韩粤语，约 1～2 秒出一句话。</div>
+      <input type="text" id="asrModel" style="width:100%" placeholder="qwen3-asr-flash">
+      <div class="hint">没有 Key？打开 <a href="https://bailian.console.aliyun.com/" target="_blank" rel="noopener">bailian.console.aliyun.com（阿里云百炼）</a> → 支付宝/淘宝账号登录 → 免费开通服务 → 右上角头像「API-KEY」→ 创建并复制。新人自动送各模型免费额度（90天），未充值账号额度用完即停、不会扣费。qwen3-asr-flash 中英日韩多语自动识别。</div>
     </div>
     <div id="localBox" style="display:none">
       <label class="fld">本地模型（首次使用需下载，之后缓存）</label>
@@ -254,8 +254,8 @@
       <li><b>直链被防盗链/跨域拦截</b>：部分网站直链需要特定来源（Referer）才能访问，会加载失败，属于站点限制，可换播放源。</li>
       <li><b>iOS 版本</b>：直链为 m3u8 时需 iOS 17.1+（支持 Managed Media Source）。iPhone 浏览器拿不到视频内部声音，开始识别会自动切到麦克风拾音（视频照常出声），请保持外放音量。Android Chrome 无此限制。</li>
       <li><b>延迟</b>：云端识别约 1～2 秒出一句；本地模式 10 秒音频约需 2～8 秒处理，字幕会滞后一小段，可用「偏移」微调显示时机。</li>
-      <li><b>准确率</b>：云端 SenseVoice 支持中英日韩粤、自动识别语言，远超本地小模型；本地模式对嘈杂/音乐背景识别较一般，英语内容建议选英语专用模型。</li>
-      <li><b>云端 Key</b>：使用硅基流动免费 API（cloud.siliconflow.cn 手机号注册即送，SenseVoice 永久免费），Key 只保存在你手机本地。</li>
+      <li><b>准确率</b>：云端 qwen3-asr-flash 支持中英日韩等多语自动识别，远超本地小模型；本地模式对嘈杂/音乐背景识别较一般，英语内容建议选英语专用模型。</li>
+      <li><b>云端 Key</b>：使用阿里云百炼 API（bailian.console.aliyun.com 支付宝/淘宝登录，新人各模型自动送免费额度），未充值账号额度用完即停不扣费，Key 只保存在你手机本地。</li>
       <li><b>保持前台</b>：锁屏或切后台后识别会暂停，已尽量申请屏幕常亮。</li>
       <li><b>版权提示</b>：本工具仅用于个人学习辅助理解，请遵守当地法律法规与网站服务条款。</li>
     </ul>
@@ -278,7 +278,7 @@ function fmtSrt(s){ const ms=Math.max(0,Math.round(s*1000)); const h=(ms/3600000
 
 /* ============ 设置持久化 ============ */
 const SET_KEY='msh_settings', TR_CACHE='msh_tr_cache';
-const settings = { asrMode:'cloud', asrKey:'', asrModel:'FunAudioLLM/SenseVoiceSmall', model:'Xenova/whisper-tiny', lang:'en', chunk:10,
+const settings = { asrMode:'cloud', asrKey:'', asrModel:'qwen3-asr-flash', model:'Xenova/whisper-tiny', lang:'en', chunk:10,
   engine:'google', sl:'auto', apiBase:'', apiKey:'', apiModel:'', mode:'both', fontSize:19, offset:0 };
 try{ Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY)||'{}')); }catch(e){}
 function saveSettings(){ localStorage.setItem(SET_KEY, JSON.stringify(settings)); }
@@ -309,9 +309,9 @@ function applyAsrMode(){ const c=settings.asrMode==='cloud';
 applyAsrMode();
 $('asrModeSel').onchange=e=>{ settings.asrMode=e.target.value; saveSettings(); applyAsrMode();
   status(e.target.value==='cloud'?'已切换云端识别：填好 Key 后点「开始识别」，零下载约 1～2 秒出一句。':'已切换本地识别：首次开始时需下载模型（约45MB）。','warn'); };
-const SF_ASR='https://api.siliconflow.cn/v1/audio/transcriptions', SF_MODEL='FunAudioLLM/SenseVoiceSmall';
+const BL_ASR='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', BL_MODEL='qwen3-asr-flash';
 $('asrKey').onchange=e=>{ settings.asrKey=e.target.value.trim(); saveSettings(); if(settings.asrKey) toast('API Key 已保存（仅存本机）'); };
-$('asrModel').onchange=e=>{ settings.asrModel=e.target.value.trim()||SF_MODEL; saveSettings(); };
+$('asrModel').onchange=e=>{ settings.asrModel=e.target.value.trim()||BL_MODEL; saveSettings(); };
 
 /* ============ 打开视频（m3u8 / mp4） ============ */
 let hls=null, urlCurrent='', tryingCors=false;
@@ -549,7 +549,7 @@ async function ensureModel(){
   status('模型就绪。','ok');
 }
 const isEnModel = m => /\.en$/.test(m);
-/* ===== 云端识别（硅基流动 OpenAI 兼容 /audio/transcriptions，SenseVoice 免费） ===== */
+/* ===== 云端识别（阿里云百炼 OpenAI 兼容 chat/completions，qwen3-asr-flash，音频走 base64 data URI） ===== */
 function encodeWAV(f32){ // 16kHz 单声道 16bit PCM
   const n=f32.length, buf=new ArrayBuffer(44+n*2), v=new DataView(buf);
   const ws=(o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
@@ -560,13 +560,14 @@ function encodeWAV(f32){ // 16kHz 单声道 16bit PCM
   for(let i=0;i<n;i++){ const x=Math.max(-1,Math.min(1,f32[i])); v.setInt16(44+i*2, x<0?x*0x8000:x*0x7FFF, true); }
   return new Blob([buf],{type:'audio/wav'});
 }
+function blobToDataURL(blob){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(new Error('音频编码读取失败')); r.readAsDataURL(blob); }); }
 async function cloudTranscribe(audio16k){
-  if(!settings.asrKey) throw new Error('未填硅基流动 API Key');
-  const fd=new FormData();
-  fd.append('file', encodeWAV(audio16k), 'chunk.wav');
-  fd.append('model', settings.asrModel||SF_MODEL);
+  if(!settings.asrKey) throw new Error('未填阿里云百炼 API Key');
+  const dataUri=await blobToDataURL(encodeWAV(audio16k));
+  const body={ model:settings.asrModel||BL_MODEL, stream:false,
+    messages:[{ role:'user', content:[{ type:'input_audio', input_audio:{ data:dataUri } }] }] };
   let r;
-  try{ r=await fetch(SF_ASR,{ method:'POST', headers:{ Authorization:'Bearer '+settings.asrKey }, body:fd }); }
+  try{ r=await fetch(BL_ASR,{ method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+settings.asrKey }, body:JSON.stringify(body) }); }
   catch(e){ throw new Error('网络请求失败（可能被跨域拦截或无网络）：'+e.message); }
   if(!r.ok){
     let msg='HTTP '+r.status;
@@ -576,7 +577,8 @@ async function cloudTranscribe(audio16k){
     throw new Error(msg);
   }
   const d=await r.json();
-  return (d.text||'').trim();
+  const text=(d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content)||d.text||'';
+  return String(text).trim();
 }
 async function runASR(audio16k, tStart){
   asrBusy=true;
@@ -768,7 +770,7 @@ $('btnStart').onclick=async()=>{
       toast('已自动切换麦克风拾音：请保持手机外放音量');
     } else if(!micMode){ connectCapture(); }
     if(settings.asrMode==='cloud'){
-      if(!settings.asrKey) throw new Error('未填硅基流动 API Key —— 在上方「语音识别」卡片粘贴（获取步骤见该卡片提示）');
+      if(!settings.asrKey) throw new Error('未填阿里云百炼 API Key —— 在上方「语音识别」卡片粘贴（获取步骤见该卡片提示）');
     }else{
       await ensureModel();
     }
