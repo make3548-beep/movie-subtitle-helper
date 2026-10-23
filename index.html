@@ -429,6 +429,39 @@ video.addEventListener('seeked',()=>{ if(rec.active) resetRecClock(); });
 
 /* ============ Whisper 识别（transformers.js 本地推理） ============ */
 let asrPipeline=null, asrBusy=false, asrQueue=[], transformersMod=null;
+// ===== 并行分片下载 + 永久缓存（模型/大文件提速，避免单线程限速） =====
+let modelCacheP=null;
+function openCache(){ if(!modelCacheP){ try{ modelCacheP=caches.open('msx-fastcache-v1'); }catch(e){ modelCacheP=Promise.reject(e); } } return modelCacheP; }
+let dlBytes={done:0,total:0,t0:0};
+function dlStatus(){ if(!dlBytes.total) return; const mb=d=>(d/1048576).toFixed(1);
+  status('模型下载 '+Math.round(dlBytes.done/dlBytes.total*100)+'% ('+mb(dlBytes.done)+'+'/'+mb(dlBytes.total)+'MB，8线程并行)…'); }
+async function fastFetch(url){
+  const probe=await fetch(url,{headers:{Range:'bytes=0-0'}});
+  if(probe.status!==206){ return new Uint8Array(await (await fetch(url)).arrayBuffer()); }
+  const cr=probe.headers.get('content-range')||''; const size=+cr.split('/')[1]||0;
+  if(!size){ return new Uint8Array(await (await fetch(url)).arrayBuffer()); }
+  const N=8, span=Math.ceil(size/N); dlBytes={done:0,total:size,t0:Date.now()};
+  const parts=new Array(N);
+  await Promise.all(Array.from({length:N},(_,i)=>(async()=>{
+    const want=span;
+    for(let a=0;a<3;a++){ try{
+      const r=await fetch(url,{headers:{Range:'bytes='+(i*span)+'-'+Math.min(size,(i+1)*span-1)}});
+      if(r.status!==206) throw 0;
+      const b=new Uint8Array(await r.arrayBuffer());
+      if(b.length>want) throw 0;
+      parts[i]=b; dlBytes.done+=b.length; dlStatus(); return;
+    }catch(e){} }
+    throw new Error('分片下载失败');
+  })()));
+  const out=new Uint8Array(size); let o=0; for(const p of parts){ out.set(p,o); o+=p.length; }
+  return out;
+}
+async function cachedFast(url){
+  let c=null; try{ c=await openCache(); const hit=await c.match(url); if(hit) return new Uint8Array(await hit.arrayBuffer()); }catch(e){}
+  const u8=await fastFetch(url);
+  if(c){ try{ c.put(url,new Response(u8)); }catch(e){} }
+  return u8;
+}
 async function ensureModel(){
   if(asrPipeline) return;
   status('正在加载识别引擎（首次需下载模型，请保持网络畅通）…');
@@ -459,6 +492,19 @@ async function ensureModel(){
     }
     try{ // ONNX 运行时 wasm 同源自托管（仓库 engine/ 目录）
       env.backends.onnx.wasm.wasmPaths = new URL('engine/', location.href).href;
+      status('下载运行时（22MB，8线程并行）…');
+      env.backends.onnx.wasm.wasmBinary = await cachedFast(new URL('engine/ort-wasm-simd-threaded.jsep.wasm', location.href).href);
+    }catch(e){}
+    try{ // 大文件走并行分片 + 永久缓存
+      env.useCustomCache=true;
+      env.customCache={
+        async match(req){ try{
+          const u=typeof req==='string'?req:(req&&req.url)||'';
+          if(!/\.onnx($|\?)/.test(u)) return undefined;
+          return new Response(await cachedFast(u));
+        }catch(e){ return undefined; } },
+        async put(){}
+      };
     }catch(e){}
   }
   status('开始加载模型（'+(settings.model==='Xenova/whisper-tiny'?'内置直连源':'镜像源')+'）…');
