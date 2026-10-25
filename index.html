@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.9 日语直播测试</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v5.0 iOS自动兜底</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -388,7 +388,7 @@ let ctx=null, srcNode=null, analyser=null, workletNode=null, micNode=null, micSt
 let rawChunks=[], totalRaw=0, sr=48000, levelBuf=null;
 const rec = { active:false, startVideoTime:0, processedRaw:0, chunkTimer:null };
 
-const IOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+const IOS = /iP(hone|od|ad)/.test(navigator.userAgent) || /iP(hone|od|ad)/.test(navigator.platform||'') || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
 async function ensureGraph(){
   if(!ctx){
     ctx = new (window.AudioContext||window.webkitAudioContext)();
@@ -424,6 +424,7 @@ async function setMicMode(on){
     micMode=true; connectCapture();
     $('btnMic').textContent='麦克风拾音：开'; $('btnMic').classList.add('primary');
     resetRecClock(); toast('麦克风拾音已开启：请让设备靠近声源');
+
   }else{
     if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
     micNode=null; micMode=false; connectCapture();
@@ -433,6 +434,16 @@ async function setMicMode(on){
 }
 $('btnMic').onclick=async()=>{ try{ await ensureGraph(); await setMicMode(!micMode); }catch(e){ toast('麦克风开启失败：'+e.message); } };
 $('btnMicFromBanner').onclick=async()=>{ try{ await ensureGraph(); await setMicMode(true); hideBanner(); }catch(e){ toast('麦克风开启失败：'+e.message); } };
+
+let micAutoSwitched=false;
+async function autoSwitchMic(){ // 接管视频声音后 4 秒仍全零（iOS 限制/UA 伪装）→ 自动转麦克风，每次会话只试一次
+  if(micAutoSwitched) return; micAutoSwitched=true;
+  try{
+    status('视频内部声音为空（iOS 限制），自动切换麦克风拾音…','warn');
+    await setMicMode(true);
+    toast('已切换麦克风拾音：请保持手机外放音量');
+  }catch(e){ status('自动切换麦克风失败：'+e.message+'（可手动点「麦克风拾音」按钮）','err'); micAutoSwitched=false; }
+}
 
 function onAudioData(f32){
   if(!rec.active) return;
@@ -764,8 +775,11 @@ function tick(){
     const bars=Math.max(0,Math.min(10,Math.round(rms*160)));
     $('level').textContent='输入音量 '+'▮'.repeat(bars)+'▯'.repeat(10-bars);
     if(!micMode && rec.active && !video.paused){
-      if(rms<0.004){ silentSec++; if(silentSec>=6 && !bannerShown){ $('banner').style.display='block'; bannerShown=true; } }
-      else { silentSec=0; if(bannerShown && rms>0.01) hideBanner(); }
+      if(rms<0.004){
+        silentSec++;
+        if(silentSec===4 && srcNode){ autoSwitchMic(); } // iOS UA伪装等场景：接管节点全零 → 自动转麦克风
+        if(silentSec>=6 && !bannerShown){ $('banner').style.display='block'; bannerShown=true; }
+      } else { silentSec=0; if(bannerShown && rms>0.01) hideBanner(); }
     }
   }
 }
