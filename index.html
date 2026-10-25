@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.6b Key核对</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.7 Key诊断</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -311,7 +311,14 @@ $('asrModeSel').onchange=e=>{ settings.asrMode=e.target.value; saveSettings(); a
   status(e.target.value==='cloud'?'已切换云端识别：填好 Key 后点「开始识别」，零下载约 1～2 秒出一句。':'已切换本地识别：首次开始时需下载模型（约45MB）。','warn'); };
 const BL_ASR='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', BL_MODEL='qwen3-asr-flash';
 $('asrKey').onchange=e=>{ settings.asrKey=e.target.value.trim(); saveSettings();
-  if(settings.asrKey){ const k=settings.asrKey; toast('Key 已保存：'+k.slice(0,5)+'…'+k.slice(-4)+'（长度'+k.length+'）'); } };
+  const k=settings.asrKey; if(!k){ return; }
+  let warn='';
+  if(k.startsWith('LTAI')) warn='你粘贴的是阿里云 AccessKey（LTAI开头），不是百炼 API-KEY！请打开 bailian.console.aliyun.com → 右上角头像 → API-KEY 页面创建';
+  else if(!k.startsWith('sk-')) warn='百炼 Key 应以 sk- 开头，你粘贴的格式不对（当前开头：'+k.slice(0,4)+'…）';
+  else if(k.length<30) warn='Key 长度只有 '+k.length+' 位，太短——复制不全，请用控制台 Key 旁的「复制」按钮';
+  else if(/x{4,}/i.test(k)) warn='Key 含连续 x，像文档示例占位符，不是真 Key';
+  if(warn) toast('⚠️ '+warn);
+  else toast('Key 已保存：'+k.slice(0,5)+'…'+k.slice(-4)+'（长度'+k.length+'，格式正常）'); };
 $('asrModel').onchange=e=>{ settings.asrModel=e.target.value.trim()||BL_MODEL; saveSettings(); };
 
 /* ============ 打开视频（m3u8 / mp4） ============ */
@@ -574,7 +581,7 @@ async function cloudTranscribe(audio16k){
   if(!r.ok){
     let msg='HTTP '+r.status;
     try{ const d=await r.json(); const em=(d.error&&d.error.message)||d.message; if(em) msg+=' '+em; }catch(e){}
-    if(r.status===401) msg='Key 无效：'+msg;
+    if(r.status===401){ const k=settings.asrKey||''; msg='Key 无效：'+msg+'（当前Key: '+(k?k.slice(0,5)+'…'+k.slice(-4)+'，长度'+k.length:'空')+'）'; }
     else if(r.status===429) msg='限流/额度不足，稍等再试：'+msg;
     throw new Error(msg);
   }
