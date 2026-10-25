@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.7b Key清洗</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.7c 兼容新Key</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -318,7 +318,7 @@ $('asrKey').onchange=e=>{ let k=e.target.value.trim();
   let warn='';
   if(k.startsWith('LTAI')) warn='你粘贴的是阿里云 AccessKey（LTAI开头），不是百炼 API-KEY！请打开 bailian.console.aliyun.com → 右上角头像 → API-KEY 页面创建';
   else if(!k.startsWith('sk-')) warn='百炼 Key 应以 sk- 开头，你粘贴的格式不对（当前开头：'+k.slice(0,4)+'…）';
-  else if(k.length>70) warn='Key 长度 '+k.length+' 位——异常（正常约51位），你复制多了！回百炼 API-KEY 页面点 Key 旁「复制」按钮重新复制';
+  else if(k.length>70) warn='提示：Key 长度 '+k.length+' 位。如果你是从百炼官方「复制」按钮复制的，属正常长度，直接点「开始识别」即可';
   else if(k.length<30) warn='Key 长度只有 '+k.length+' 位，太短——复制不全，请用控制台 Key 旁的「复制」按钮';
   else if(/x{4,}/i.test(k)) warn='Key 含连续 x，像文档示例占位符，不是真 Key';
   if(warn) toast('⚠️ '+warn);
