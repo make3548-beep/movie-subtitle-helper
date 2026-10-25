@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.7 Key诊断</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v4.7b Key清洗</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -310,11 +310,15 @@ applyAsrMode();
 $('asrModeSel').onchange=e=>{ settings.asrMode=e.target.value; saveSettings(); applyAsrMode();
   status(e.target.value==='cloud'?'已切换云端识别：填好 Key 后点「开始识别」，零下载约 1～2 秒出一句。':'已切换本地识别：首次开始时需下载模型（约45MB）。','warn'); };
 const BL_ASR='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', BL_MODEL='qwen3-asr-flash';
-$('asrKey').onchange=e=>{ settings.asrKey=e.target.value.trim(); saveSettings();
-  const k=settings.asrKey; if(!k){ return; }
+$('asrKey').onchange=e=>{ let k=e.target.value.trim();
+  const ns=k.replace(/\s+/g,'');
+  if(ns!==k){ k=ns; e.target.value=k; toast('已自动去除 Key 里的空格/换行'); }
+  settings.asrKey=k; saveSettings();
+  if(!k){ return; }
   let warn='';
   if(k.startsWith('LTAI')) warn='你粘贴的是阿里云 AccessKey（LTAI开头），不是百炼 API-KEY！请打开 bailian.console.aliyun.com → 右上角头像 → API-KEY 页面创建';
   else if(!k.startsWith('sk-')) warn='百炼 Key 应以 sk- 开头，你粘贴的格式不对（当前开头：'+k.slice(0,4)+'…）';
+  else if(k.length>70) warn='Key 长度 '+k.length+' 位——异常（正常约51位），你复制多了！回百炼 API-KEY 页面点 Key 旁「复制」按钮重新复制';
   else if(k.length<30) warn='Key 长度只有 '+k.length+' 位，太短——复制不全，请用控制台 Key 旁的「复制」按钮';
   else if(/x{4,}/i.test(k)) warn='Key 含连续 x，像文档示例占位符，不是真 Key';
   if(warn) toast('⚠️ '+warn);
