@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v5.5 快翻快显</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.0 音画同步</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -611,11 +611,12 @@ async function cloudTranscribe(audio16k){
 }
 async function runASR(audio16k, tStart){
   asrBusy=true;
+  const myEpoch=asrEpoch;
   try{
     if(settings.asrMode==='cloud'){
       const text=await cloudTranscribe(audio16k);
       sentCount++; lastText=(text&&text.slice(0,40))||'(空文本)';
-      handleTranscript({text}, tStart);
+      if(myEpoch===asrEpoch){ handleTranscript({text}, tStart); maybeResync(); }
       status('云端识别中（'+settings.chunk+'s/段）…','ok');
     }else{
       if(!asrPipeline) await ensureModel();
@@ -623,12 +624,32 @@ async function runASR(audio16k, tStart){
       if(!isEnModel(settings.model) && settings.lang!=='auto'){ opts.language=settings.lang; opts.task='transcribe'; }
       const out=await asrPipeline(audio16k, opts);
       sentCount++; lastText=(out&&out.text&&String(out.text).slice(0,40))||'(空文本)';
-      handleTranscript(out, tStart);
+      if(myEpoch===asrEpoch){ handleTranscript(out, tStart); maybeResync(); }
       status('识别运行中（'+settings.chunk+'s/段）…','ok');
     }
   }catch(err){ status('识别出错：'+((err&&err.message)||err),'err'); }
   asrBusy=false;
   if(asrQueue.length){ const next=asrQueue.shift(); runASR(next.audio, next.t); }
+}
+/* ============ 音画同步：首句字幕出来后自动回带重播 ============ */
+let syncAnchor=null, resynced=false, asrEpoch=0;
+function maybeResync(){
+  if(resynced || syncAnchor==null || gotCount===0) return;
+  resynced=true;
+  try{
+    const dvrStart = video.seekable.length ? video.seekable.start(0) : 0;
+    const target = Math.max(syncAnchor-0.5, dvrStart+1);
+    if(video.currentTime - target < 4) return;              // 只回带 4 秒以上才有意义
+    asrEpoch++;                                              // 丢弃飞行中的旧识别结果
+    video.currentTime = target;
+    lines.length=0; pending.length=0; gotCount=0; sentCount=0; lastText=''; trLastErr='';
+    $('linesList').innerHTML='';
+    rec.processedRaw = totalRaw;                             // 已播过的声音不再重复识别
+    rec.startVideoTime = video.currentTime;
+    resetRecClock();
+    status('音画同步：已回带重播，之后字幕与声音实时对齐','ok');
+    toast('音画同步已开启：字幕与声音从现在起对齐');
+  }catch(e){}
 }
 function handleTranscript(out, tStart){
   const chunks=(out&&out.chunks)||[];
@@ -845,6 +866,7 @@ $('btnStart').onclick=async()=>{
     }
     resetRecClock();
     rec.active=true;
+    syncAnchor=video.currentTime; resynced=false; asrEpoch++;   // 音画同步：记录起点，首次出句后自动回带
     rec.chunkTimer=setInterval(tick,1000);
     try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){}
     status('识别运行中（'+settings.chunk+'s/段）…','ok');
