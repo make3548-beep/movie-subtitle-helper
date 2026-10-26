@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v5.2 双显字幕</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v5.3 延迟补偿</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -647,7 +647,8 @@ const lines=[]; const pending=[];
 function addLine(t0,t1,orig){
   const last=lines[lines.length-1];
   if(last && last.orig===orig && t0-last.t1<1.2){ last.t1=t1; return; }   // 合并重复
-  const line={ t0, t1, orig, zh:null, el:null };
+  const delay=Math.max(0, video.currentTime - t0);   // 云端识别耗时补偿：识别回来即可显示
+  const line={ t0, t1, orig, zh:null, el:null, delay };
   lines.push(line); pending.push(line); gotCount++;
   renderListItem(line);
 }
@@ -664,7 +665,7 @@ setInterval(()=>{ // 字幕显示循环
   const cur=video.currentTime + settings.offset/1000;
   let hit=null;
   for(let i=lines.length-1;i>=0;i--){ const L=lines[i];
-    if(L.t0<=cur && cur<L.t1){ hit=L; break; } if(L.t1<cur-30) break; }
+    if(L.t0+(L.delay||0)<=cur && cur<L.t1+(L.delay||0)){ hit=L; break; } if(L.t1+(L.delay||0)<cur-30) break; }
   const o=$('subOrig'), z=$('subZh'), fb=$('subFallback');
   if(hit){
     const showOrig = settings.mode!=='zh';
