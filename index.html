@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.2 自动语种</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.3 净化过滤</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -593,7 +593,10 @@ function blobToDataURL(blob){ return new Promise((res,rej)=>{ const r=new FileRe
 function cleanText(t){
   t=String(t||'').replace(/\s+/g,' ').trim();
   if(t.length<2) return '';                                    // 太短
-  if(!/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\u0400-\u04ffA-Za-z0-9]/.test(t)) return ''; // 纯标点/乱码
+  if(/[<>{}[\]|~`^$%&@*#]/.test(t)) return '';                 // 含代码/HTML特征字符 → 模型幻觉
+  if(!/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\u0400-\u04ffA-Za-z0-9]/.test(t)) return ''; // 纯标点
+  const ok=(t.match(/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\u0400-\u04ffA-Za-z0-9\s，。！？、,.!?…—：:；;「」（）()"'’“”]/g)||[]).length;
+  if(ok/t.length<0.7) return '';                               // 正常字符占比过低 → 乱码
   if(/^(.)\1{3,}$/.test(t)) return '';                         // 单字符复读幻觉
   return t;
 }
