@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v5.1 诊断显示</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v5.2 双显字幕</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -85,6 +85,10 @@
     <div class="vwrap">
       <video id="video" controls playsinline preload="metadata"></video>
       <div id="subOverlay"><div id="subOrig"></div><div id="subZh"></div></div>
+    </div>
+    <div id="subFallback" style="display:none; text-align:center; padding:8px 10px; margin-top:8px; background:#000; border:1px solid var(--line); border-radius:10px">
+      <div id="fbOrig" style="font-size:13px; color:#cfd6e4; opacity:.85; margin-bottom:2px"></div>
+      <div id="fbZh" style="font-size:20px; color:#fff; font-weight:700; line-height:1.4"></div>
     </div>
     <div id="banner">
       检测不到视频声音（该直链受跨域限制）。建议换一个播放源；或切「麦克风拾音」让麦克风对着声源继续识别，效果受环境影响。
@@ -661,7 +665,7 @@ setInterval(()=>{ // 字幕显示循环
   let hit=null;
   for(let i=lines.length-1;i>=0;i--){ const L=lines[i];
     if(L.t0<=cur && cur<L.t1){ hit=L; break; } if(L.t1<cur-30) break; }
-  const o=$('subOrig'), z=$('subZh');
+  const o=$('subOrig'), z=$('subZh'), fb=$('subFallback');
   if(hit){
     const showOrig = settings.mode!=='zh';
     const zh = hit.zh!=null?hit.zh:(settings.sl.startsWith('zh')?hit.orig:null);
@@ -669,7 +673,12 @@ setInterval(()=>{ // 字幕显示循环
     else if(zh){ if(showOrig){ o.textContent=hit.orig; o.style.display='block'; } else o.style.display='none';
       z.textContent=zh; z.style.display='block'; }
     else { o.textContent=hit.orig; o.style.display='block'; z.style.display='none'; } // 译文未到，先显示原文
-  } else { o.style.display='none'; z.style.display='none'; }
+    // 备用字幕条（视频下方文档流，全屏/覆盖层失效时兜底）
+    fb.style.display='block';
+    $('fbOrig').textContent = showOrig?hit.orig:'';
+    $('fbOrig').style.display = showOrig?'block':'none';
+    $('fbZh').textContent = (zh!=null?zh:hit.orig);
+  } else { o.style.display='none'; z.style.display='none'; fb.style.display='none'; }
 }, 200);
 
 /* ============ 翻译（多引擎 + 缓存 + 失败降级） ============ */
