@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v5.4 百炼翻译</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v5.5 快翻快显</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -666,20 +666,20 @@ setInterval(()=>{ // 字幕显示循环
   const cur=video.currentTime + settings.offset/1000;
   let hit=null;
   for(let i=lines.length-1;i>=0;i--){ const L=lines[i];
-    if(L.t0+(L.delay||0)<=cur && cur<L.t1+(L.delay||0)){ hit=L; break; } if(L.t1+(L.delay||0)<cur-30) break; }
+    if(L.t0+(L.delay||0)<=cur && cur<L.t1+(L.delay||0)+6){ hit=L; break; } if(L.t1+(L.delay||0)<cur-30) break; }
   const o=$('subOrig'), z=$('subZh'), fb=$('subFallback');
   if(hit){
     const showOrig = settings.mode!=='zh';
-    const zh = hit.zh!=null?hit.zh:(settings.sl.startsWith('zh')?hit.orig:null);
-    if(settings.mode==='orig'){ o.textContent=hit.orig; o.style.display='block'; z.style.display='none'; }
-    else if(zh){ if(showOrig){ o.textContent=hit.orig; o.style.display='block'; } else o.style.display='none';
-      z.textContent=zh; z.style.display='block'; }
-    else { o.textContent=hit.orig; o.style.display='block'; z.style.display='none'; } // 译文未到，先显示原文
+    const zhPending = hit.zh==null;                 // 译文还在路上
+    const hasZh = !zhPending && !!hit.zh;           // 中文已到
+    const zhShown = hasZh ? hit.zh : (zhPending ? '…' : hit.orig);
+    if(showOrig){ o.textContent=hit.orig; o.style.display='block'; } else o.style.display='none';
+    if(settings.mode!=='orig'){ z.textContent=zhShown; z.style.display='block'; } else z.style.display='none';
     // 备用字幕条（视频下方文档流，全屏/覆盖层失效时兜底）
     fb.style.display='block';
     $('fbOrig').textContent = showOrig?hit.orig:'';
     $('fbOrig').style.display = showOrig?'block':'none';
-    $('fbZh').textContent = (zh!=null?zh:hit.orig);
+    $('fbZh').textContent = zhShown;
   } else { o.style.display='none'; z.style.display='none'; fb.style.display='none'; }
 }, 200);
 
@@ -721,7 +721,7 @@ async function translateMyMemory(texts, sl){
 async function translateBailian(texts){
   if(!settings.asrKey) throw new Error('未填百炼 API Key（识别处填的那个）');
   const r=await fetchTO(BL_ASR,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+settings.asrKey},
-    body:JSON.stringify({ model:'qwen-turbo', temperature:0,
+    body:JSON.stringify({ model:'qwen-flash', temperature:0,
       messages:[
         {role:'system',content:'你是影视字幕翻译引擎。把用户发来的每一行原文（可能是日语/英语/韩语/俄语等）翻译成简体中文。要求：输出行数与输入完全一致，每行一条译文，不要编号、不要解释、不要合并行。'},
         {role:'user',content:texts.join('\n')}
