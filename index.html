@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.0 音画同步</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.1 直采优先</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -406,7 +406,7 @@ async function ensureGraph(){
     workletNode.port.onmessage = e=>onAudioData(e.data);
   }
   await ctx.resume();
-  if(!srcNode && !IOS && !tainted){ // iOS 及跨域受限直链：接管视频声音会静音，改走麦克风；同元素只能创建一次
+  if(!srcNode && !tainted){ // 优先直采视频内部音频（音质最好）；接管后无声时 tick 会自动转麦克风；同元素只能创建一次
     try{ srcNode = ctx.createMediaElementSource(video); }catch(e){ srcNode=null; }
   }
 }
@@ -590,11 +590,20 @@ function encodeWAV(f32){ // 16kHz 单声道 16bit PCM
   return new Blob([buf],{type:'audio/wav'});
 }
 function blobToDataURL(blob){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(new Error('音频编码读取失败')); r.readAsDataURL(blob); }); }
+function cleanText(t){
+  t=String(t||'').replace(/\s+/g,' ').trim();
+  if(t.length<2) return '';                                    // 太短
+  if(!/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\u0400-\u04ffA-Za-z0-9]/.test(t)) return ''; // 纯标点/乱码
+  if(/^(.)\1{3,}$/.test(t)) return '';                         // 单字符复读幻觉
+  return t;
+}
 async function cloudTranscribe(audio16k){
   if(!settings.asrKey) throw new Error('未填阿里云百炼 API Key');
   const dataUri=await blobToDataURL(encodeWAV(audio16k));
-  const body={ model:settings.asrModel||BL_MODEL, stream:false,
-    messages:[{ role:'user', content:[{ type:'input_audio', input_audio:{ data:dataUri } }] }] };
+  const langName={en:'英语',zh:'中文',ja:'日语',ko:'韩语',ru:'俄语'}[settings.lang];
+  const parts=[{ type:'input_audio', input_audio:{ data:dataUri } }];
+  if(langName) parts.push({ type:'text', text:'请只输出'+langName+'的识别文本。' });  // 语言锁定，防英语漂移
+  const body={ model:settings.asrModel||BL_MODEL, stream:false, messages:[{ role:'user', content:parts }] };
   let r;
   try{ r=await fetch(BL_ASR,{ method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+settings.asrKey }, body:JSON.stringify(body) }); }
   catch(e){ throw new Error('网络请求失败（可能被跨域拦截或无网络）：'+e.message); }
@@ -614,9 +623,9 @@ async function runASR(audio16k, tStart){
   const myEpoch=asrEpoch;
   try{
     if(settings.asrMode==='cloud'){
-      const text=await cloudTranscribe(audio16k);
-      sentCount++; lastText=(text&&text.slice(0,40))||'(空文本)';
-      if(myEpoch===asrEpoch){ handleTranscript({text}, tStart); maybeResync(); }
+      const text=cleanText(await cloudTranscribe(audio16k));
+      sentCount++; lastText=text?('「'+text.slice(0,40)+'」'):'(无有效语音，已过滤)';
+      if(myEpoch===asrEpoch && text){ handleTranscript({text}, tStart); maybeResync(); }
       status('云端识别中（'+settings.chunk+'s/段）…','ok');
     }else{
       if(!asrPipeline) await ensureModel();
@@ -774,7 +783,7 @@ const trStat={}; // 引擎诊断计数 {ok:N, fail:N}
 function trStr(){ const parts=[]; for(const e in trStat){ const s=trStat[e]; if(s.ok||s.fail) parts.push(e+'✓'+s.ok+'/✗'+s.fail); } return parts.join(' '); }
 function flushTranslate(){
   if(!pending.length) return;
-  const batch=pending.splice(0,10);
+  const batch=pending.splice(0,6);
   (async()=>{
     const texts=batch.map(l=>l.orig);
     const sl=settings.sl;
@@ -806,7 +815,7 @@ function flushTranslate(){
   })();
 }
 let trLastErr='';
-trTimer=setInterval(flushTranslate, 900);
+trTimer=setInterval(flushTranslate, 600);
 
 /* ============ 分段调度 + 静音检测 + 音量条 ============ */
 let silentSec=0, bannerShown=false, micSilentSec=0;
