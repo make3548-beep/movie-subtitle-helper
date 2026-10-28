@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.1 日语测试源</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.2 翻译降级链</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -181,6 +181,11 @@
         </select>
       </div>
     </div>
+    <div id="bailianBox">
+      <label class="fld">百炼翻译模型名（用你账号里「已开通」的对话模型）</label>
+      <input type="text" id="trModel" style="width:100%" placeholder="qwen-flash">
+      <div class="hint">识别用的 Key 这里直接复用。若这个模型没开通会报错，去百炼控制台「模型广场」开通，或改成你已开通的对话模型（如 qwen-plus、qwen-turbo）。</div>
+    </div>
     <div id="apiBox" style="display:none">
       <label class="fld">API 地址（如 https://api.xxx.com/v1）</label>
       <input type="text" id="apiBase" style="width:100%" placeholder="https://api.deepseek.com/v1">
@@ -286,13 +291,14 @@ function fmtSrt(s){ const ms=Math.max(0,Math.round(s*1000)); const h=(ms/3600000
 /* ============ 设置持久化 ============ */
 const SET_KEY='msh_settings', TR_CACHE='msh_tr_cache';
 const settings = { asrMode:'cloud', asrKey:'', asrModel:'qwen3-asr-flash', model:'Xenova/whisper-tiny', lang:'en', chunk:10,
-  engine:'google', sl:'auto', apiBase:'', apiKey:'', apiModel:'', mode:'both', fontSize:19, offset:0 };try{ Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY)||'{}')); }catch(e){}
+  engine:'google', sl:'auto', apiBase:'', apiKey:'', apiModel:'', trModel:'qwen-flash', mode:'both', fontSize:19, offset:0 };try{ Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY)||'{}')); }catch(e){}
 function saveSettings(){ localStorage.setItem(SET_KEY, JSON.stringify(settings)); }
 if(settings.engine==='google'){ settings.engine='bailian'; saveSettings(); } // 谷歌国内被墙，一次性迁移到百炼
 $('asrModeSel').value=settings.asrMode; $('asrKey').value=settings.asrKey; $('asrModel').value=settings.asrModel;
 $('modelSel').value=settings.model; $('langSel').value=settings.lang; $('chunkSel').value=String(settings.chunk);
 $('engineSel').value=settings.engine; $('slSel').value=settings.sl;
 $('apiBase').value=settings.apiBase; $('apiKey').value=settings.apiKey; $('apiModel').value=settings.apiModel;
+$('trModel').value=settings.trModel;
 $('modeSel').value=settings.mode; $('fontSize').value=settings.fontSize; $('offset').value=settings.offset;
 function applyDisp(){
   document.documentElement.style.setProperty('--subsize', settings.fontSize+'px');
@@ -302,8 +308,12 @@ applyDisp();
 $('modelSel').onchange=e=>{ settings.model=e.target.value; saveSettings(); asrPipeline=null; status('模型已切换，将在下次开始识别时加载。','warn'); };
 $('langSel').onchange=e=>{ settings.lang=e.target.value; saveSettings(); };
 $('chunkSel').onchange=e=>{ settings.chunk=parseFloat(e.target.value); saveSettings(); };
-$('engineSel').onchange=e=>{ settings.engine=e.target.value; saveSettings(); $('apiBox').style.display = e.target.value==='custom'?'block':'none'; };
-$('apiBox').style.display = settings.engine==='custom'?'block':'none';
+$('engineSel').onchange=e=>{ settings.engine=e.target.value; saveSettings(); applyEngineBox();
+  if(e.target.value==='google') toast('提醒：谷歌免key 接口国内实测不通（12 秒超时），只在海外网络下可用'); };
+function applyEngineBox(){ $('apiBox').style.display = settings.engine==='custom'?'block':'none';
+  $('bailianBox').style.display = settings.engine==='bailian'?'block':'none'; }
+applyEngineBox();
+$('trModel').onchange=e=>{ settings.trModel=e.target.value.trim()||'qwen-flash'; saveSettings(); };
 $('slSel').onchange=e=>{ settings.sl=e.target.value; saveSettings(); };
 $('apiBase').onchange=e=>{ settings.apiBase=e.target.value.trim(); saveSettings(); };
 $('apiKey').onchange=e=>{ settings.apiKey=e.target.value.trim(); saveSettings(); };
@@ -779,7 +789,7 @@ async function translateMyMemory(texts, sl){
 async function translateBailian(texts){
   if(!settings.asrKey) throw new Error('未填百炼 API Key（识别处填的那个）');
   const r=await fetchTO(BL_ASR,{ method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+settings.asrKey},
-    body:JSON.stringify({ model:'qwen-flash', temperature:0,
+    body:JSON.stringify({ model:settings.trModel||'qwen-flash', temperature:0,
       messages:[
         {role:'system',content:'你是影视字幕翻译引擎。把用户发来的每一行原文（可能是日语/英语/韩语/俄语等）翻译成简体中文。要求：输出行数与输入完全一致，每行一条译文，不要编号、不要解释、不要合并行。'},
         {role:'user',content:texts.join('\n')}
@@ -795,14 +805,14 @@ function fetchTO(url,opt,ms){ const c=new AbortController(); const t=setTimeout(
   return fetch(url,{...(opt||{}),signal:c.signal}).finally(()=>clearTimeout(t)); }
 async function translateCustom(texts){
   if(!settings.apiBase||!settings.apiKey) throw new Error('请先填写自定义 API 地址和 Key');
-  const r=await fetch(settings.apiBase.replace(/\/+$/,'')+'/chat/completions',{
+  const r=await fetchTO(settings.apiBase.replace(/\/+$/,'')+'/chat/completions',{
     method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+settings.apiKey},
     body:JSON.stringify({ model:settings.apiModel||'gpt-4o-mini', temperature:0,
       messages:[
         {role:'system',content:'你是影视字幕翻译引擎。将用户发来的每一行原文翻译成简体中文。要求：输出行数与输入完全一致，每行一条译文，不要编号、不要解释、不要合并行。'},
         {role:'user',content:texts.join('\n')}
-      ]})});
-  if(!r.ok) throw new Error('HTTP '+r.status);
+      ]})},20000);
+  if(!r.ok) throw new Error('自定义API HTTP '+r.status+'（模型名/地址对不对）');
   const d=await r.json();
   return (d.choices[0].message.content||'').trim().split('\n').map(s=>s.replace(/^\d+[.、:：]\s*/,'').trim());
 }
@@ -821,8 +831,9 @@ function flushTranslate(){
     const needIdx=[]; for(let i=0;i<texts.length;i++) if(cands[i]==null) needIdx.push(i);
     if(needIdx.length){
       const needTexts=needIdx.map(i=>texts[i]);
-      const order=['bailian','google','mymemory'];
-      const tries=[settings.engine, ...order.filter(e=>e!==settings.engine)];
+      // 降级链里不再自动试谷歌：国内实测 12 秒不通，每次白等 8 秒会把翻译队列拖死；手动选谷歌时仍走谷歌
+      const order = settings.engine==='google' ? ['google','bailian','mymemory'] : ['bailian','mymemory'];
+      const tries=[...new Set([settings.engine, ...order])];
       let res=null, lastErr=null, usedEng=null;
       for(const e of tries){
         try{
@@ -836,13 +847,20 @@ function flushTranslate(){
       if(res){
         needIdx.forEach((idx,k)=>{ const v=(res[k]||'').trim(); cands[idx]=v||texts[idx]; cacheSet(keys[idx],cands[idx]); });
       } else {
-        batch.forEach(l=>{ trLastErr=(lastErr&&lastErr.message)||'全部引擎失败'; });
+        trLastErr=(lastErr&&lastErr.message)||'全部引擎失败';
+        reportTrFail(trLastErr);
       }
     }
     batch.forEach((l,i)=>{ l.zh=cands[i]||''; renderLineZh(l); });
   })();
 }
-let trLastErr='';
+let trLastErr='', trErrShownAt=0;
+function reportTrFail(msg){                              // 翻译静默失败最坑人：只显示原文，用户不知道哪坏了
+  if(Date.now()-trErrShownAt < 30000) return;
+  trErrShownAt=Date.now();
+  status('翻译没出来：'+msg,'err');
+  toast('翻译失败：'+String(msg).slice(0,70)+' —— 提示模型不存在/未开通就改填「百炼翻译模型名」，或翻译引擎改 MyMemory', 6000);
+}
 trTimer=setInterval(flushTranslate, 600);
 
 /* ============ 静音切句（VAD）+ 调度 + 音量条 ============ */
