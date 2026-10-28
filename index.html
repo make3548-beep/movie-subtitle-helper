@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.3 净化过滤</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4 音译同步</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -119,15 +119,16 @@
         </select>
       </div>
       <div>
-        <label class="fld">分段时长</label>
+        <label class="fld">分段上限</label>
         <select id="chunkSel" style="width:100%">
-          <option value="5">5 秒（延迟低）</option>
+          <option value="5">5 秒（延迟最低）</option>
           <option value="8">8 秒</option>
-          <option value="10" selected>10 秒（推荐）</option>
+          <option value="10" selected>10 秒（稳）</option>
           <option value="15">15 秒</option>
         </select>
       </div>
     </div>
+    <div class="hint">静音自动切句：一句话说完就送识别，不必等满上限；上限只防连续对白不断流。</div>
     <div id="cloudBox">
       <label class="fld">阿里云百炼 API Key（注册送额度，不充值不扣费，Key 只存本机）</label>
       <input type="password" id="asrKey" style="width:100%" placeholder="sk-...">
@@ -152,7 +153,7 @@
       <button id="btnSrt" class="narrow">导入字幕</button>
       <input type="file" id="srtFile" accept=".srt,.vtt,.ass,.ssa,.txt" style="display:none">
     </div>
-    <div class="status" id="status">待机。填好上方云端 Key 后点「开始识别」（约 1～2 秒出一句话）；有现成字幕文件时点「导入字幕」更快更准。</div>
+    <div class="status" id="status">待机。填好上方云端 Key 后点「开始识别」（一句话说完约 2～3 秒出字幕）；有现成字幕文件时点「导入字幕」更快更准。</div>
     <div class="status" id="level"></div>
   </div>
 
@@ -212,6 +213,7 @@
         <input type="range" id="offset" min="-5000" max="5000" step="100" value="0">
       </div>
     </div>
+    <div class="hint">状态栏的「字幕滞后」是声音到字幕的实测间隔。想让它显示得更久一点，用「偏移」把时间轴往后挪。</div>
   </div>
 
   <!-- 字幕记录 -->
@@ -258,7 +260,7 @@
     <ul>
       <li><b>直链被防盗链/跨域拦截</b>：部分网站直链需要特定来源（Referer）才能访问，会加载失败，属于站点限制，可换播放源。</li>
       <li><b>iOS 版本</b>：直链为 m3u8 时需 iOS 17.1+（支持 Managed Media Source）。iPhone 浏览器拿不到视频内部声音，开始识别会自动切到麦克风拾音（视频照常出声），请保持外放音量。Android Chrome 无此限制。</li>
-      <li><b>延迟</b>：云端识别约 1～2 秒出一句；本地模式 10 秒音频约需 2～8 秒处理，字幕会滞后一小段，可用「偏移」微调显示时机。</li>
+      <li><b>字幕滞后</b>：识别必须听完一句话才知道内容，所以字幕天然比声音晚，量级 = 句尾静音 0.4 秒 + 网络往返。静音切句加两段并发把这段压到约 2～3 秒（旧的固定 10 秒分段要 11 秒以上）。状态栏「字幕滞后」是实测值，觉得刺眼可用「偏移」微调显示时机。</li>
       <li><b>准确率</b>：云端 qwen3-asr-flash 支持中英日韩等多语自动识别，远超本地小模型；本地模式对嘈杂/音乐背景识别较一般，英语内容建议选英语专用模型。</li>
       <li><b>云端 Key</b>：使用阿里云百炼 API（bailian.console.aliyun.com 支付宝/淘宝登录，新人各模型自动送免费额度），未充值账号额度用完即停不扣费，Key 只保存在你手机本地。</li>
       <li><b>保持前台</b>：锁屏或切后台后识别会暂停，已尽量申请屏幕常亮。</li>
@@ -390,8 +392,10 @@ class CaptureProcessor extends AudioWorkletProcessor{
 registerProcessor('capture-processor', CaptureProcessor);`;
 
 let ctx=null, srcNode=null, analyser=null, workletNode=null, micNode=null, micStream=null, micMode=false;
-let rawChunks=[], totalRaw=0, sr=48000, levelBuf=null;
+let rawChunks=[], rmsChunks=[], totalRaw=0, sr=48000, levelBuf=null;
 const rec = { active:false, startVideoTime:0, processedRaw:0, chunkTimer:null };
+/* doneFrontier = 已识别覆盖到的采样位置；currentTime 减它 = 实测字幕滞后 */
+let doneFrontier=0, frontierTasks=[], followLag=0;
 
 const IOS = /iP(hone|od|ad)/.test(navigator.userAgent) || /iP(hone|od|ad)/.test(navigator.platform||'') || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
 async function ensureGraph(){
@@ -453,6 +457,9 @@ async function autoSwitchMic(){ // 接管视频声音后 4 秒仍全零（iOS �
 function onAudioData(f32){
   if(!rec.active) return;
   rawChunks.push(f32); totalRaw += f32.length;
+  let s=0; for(let i=0;i<f32.length;i++) s+=f32[i]*f32[i];
+  const rms=Math.sqrt(s/f32.length);
+  rmsChunks.push(rms); trackNoiseFloor(rms);          // 每块一个电平值，供静音切句用
 }
 /* 按原始采样区间切片并重采样到 16kHz（Whisper 输入要求） */
 function slice16k(startRaw, endRaw){
@@ -472,21 +479,26 @@ function slice16k(startRaw, endRaw){
     const a=raw[i0]||0, b=raw[i0+1]||0; out[i]=a+(b-a)*fr; }
   return out;
 }
-/* 丢弃已处理完的旧音频块，控制内存占用 */
+/* 丢弃已处理完的旧音频块，控制内存占用（电平数组同步丢弃，索引才对得上） */
 function pruneRawSafe(){
-  const keepFrom=Math.max(0, rec.processedRaw - 25*sr);
+  const keepFrom=Math.max(0, rec.processedRaw - 30*sr);
   let base=0, i=0;
   while(i<rawChunks.length){ const c=rawChunks[i]; if(base+c.length<=keepFrom){ base+=c.length; i++; } else break; }
-  if(i>0) rawChunks=rawChunks.slice(i);
+  if(i>0){ rawChunks=rawChunks.slice(i); rmsChunks=rmsChunks.slice(i); }
 }
 function resetRecClock(){
-  rawChunks=[]; totalRaw=0; rec.processedRaw=0;
+  rawChunks=[]; rmsChunks=[]; totalRaw=0; rec.processedRaw=0;
   rec.startVideoTime=video.currentTime||0;
+  doneFrontier=0; frontierTasks.length=0;
 }
-video.addEventListener('seeked',()=>{ if(rec.active) resetRecClock(); });
+video.addEventListener('seeked',()=>{
+  if(!rec.active) return;
+  resetRecClock(); asrEpoch++; inFlight=0; waitQueue.length=0; followLag=0;
+  status('进度已变动，字幕时间轴重新对齐（从当前位置重新识别）。','warn');
+});
 
 /* ============ Whisper 识别（transformers.js 本地推理） ============ */
-let asrPipeline=null, asrBusy=false, asrQueue=[], transformersMod=null;
+let asrPipeline=null, transformersMod=null;
 // ===== 并行分片下载 + 永久缓存（模型/大文件提速，避免单线程限速） =====
 let modelCacheP=null;
 function openCache(){ if(!modelCacheP){ try{ modelCacheP=caches.open('msx-fastcache-v1'); }catch(e){ modelCacheP=Promise.reject(e); } } return modelCacheP; }
@@ -619,58 +631,68 @@ async function cloudTranscribe(audio16k){
   const text=(d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content)||d.text||'';
   return String(text).trim();
 }
-async function runASR(audio16k, tStart){
-  asrBusy=true;
+/* ============ 识别调度：在途并发 + 已识别覆盖前沿 ============ */
+let asrEpoch=0, inFlight=0; const waitQueue=[];
+const MAX_FLIGHT=2;                          // 同时在途最多 2 段：既压低滞后又防限流
+function taskAdd(t){ frontierTasks.push(t); mergeFrontier(); }
+function mergeFrontier(){                    // 只有首尾相接、连续完成的部分才算「已识别覆盖」，乱序返回要等前面补齐
+  frontierTasks.sort((a,b)=>a.start-b.start);
+  let go=true;
+  while(go){ go=false;
+    for(let i=0;i<frontierTasks.length;i++){ const t=frontierTasks[i];
+      if(!t.done) continue;
+      if(t.end<=doneFrontier){ frontierTasks.splice(i,1); go=true; break; }
+      if(t.start<=doneFrontier && t.end>doneFrontier){ doneFrontier=t.end; frontierTasks.splice(i,1); go=true; break; } } }
+}
+function pump(){ while(inFlight<MAX_FLIGHT && waitQueue.length){ inFlight++; runASR(waitQueue.shift()); } }
+function sendTask(startRaw,endRaw,skipAsr){
+  const t={ start:startRaw, end:endRaw, done:false, dur:(endRaw-startRaw)/sr,
+            tStart:rec.startVideoTime + startRaw/sr, audio:null };
+  taskAdd(t);
+  if(skipAsr){ t.done=true; mergeFrontier(); return; }        // 纯静音段本地就能判定，不发网络
+  t.audio=slice16k(startRaw,endRaw);
+  asrSecs+=t.dur;
+  waitQueue.push(t); pump();
+}
+async function runASR(task){
   const myEpoch=asrEpoch;
   try{
     if(settings.asrMode==='cloud'){
-      const text=cleanText(await cloudTranscribe(audio16k));
+      const text=cleanText(await cloudTranscribe(task.audio));
       sentCount++; lastText=text?('「'+text.slice(0,40)+'」'):'(无有效语音，已过滤)';
-      if(myEpoch===asrEpoch && text){ handleTranscript({text}, tStart); maybeResync(); }
-      status('云端识别中（'+settings.chunk+'s/段）…','ok');
+      if(myEpoch===asrEpoch && text) handleTranscript({text}, task);
+      status('云端识别中（静音切句，上限 '+settings.chunk+'s/段）…','ok');
     }else{
       if(!asrPipeline) await ensureModel();
       const opts={ return_timestamps:true };
       if(!isEnModel(settings.model) && settings.lang!=='auto'){ opts.language=settings.lang; opts.task='transcribe'; }
-      const out=await asrPipeline(audio16k, opts);
+      const out=await asrPipeline(task.audio, opts);
       sentCount++; lastText=(out&&out.text&&String(out.text).slice(0,40))||'(空文本)';
-      if(myEpoch===asrEpoch){ handleTranscript(out, tStart); maybeResync(); }
-      status('识别运行中（'+settings.chunk+'s/段）…','ok');
+      if(myEpoch===asrEpoch) handleTranscript(out, task);
+      status('本地识别中（静音切句，上限 '+settings.chunk+'s/段）…','ok');
     }
   }catch(err){ status('识别出错：'+((err&&err.message)||err),'err'); }
-  asrBusy=false;
-  if(asrQueue.length){ const next=asrQueue.shift(); runASR(next.audio, next.t); }
+  task.done=true; inFlight=Math.max(0,inFlight-1); mergeFrontier();   // 出错也算覆盖过，否则前沿卡死
+  if(myEpoch===asrEpoch) pump(); else { waitQueue.length=0; }
 }
-/* ============ 音画同步：首句字幕出来后自动回带重播 ============ */
-let syncAnchor=null, resynced=false, asrEpoch=0;
-function maybeResync(){
-  if(resynced || syncAnchor==null || gotCount===0) return;
-  resynced=true;
-  try{
-    const dvrStart = video.seekable.length ? video.seekable.start(0) : 0;
-    const target = Math.max(syncAnchor-0.5, dvrStart+1);
-    if(video.currentTime - target < 4) return;              // 只回带 4 秒以上才有意义
-    asrEpoch++;                                              // 丢弃飞行中的旧识别结果
-    video.currentTime = target;
-    lines.length=0; pending.length=0; gotCount=0; sentCount=0; lastText=''; trLastErr='';
-    $('linesList').innerHTML='';
-    rec.processedRaw = totalRaw;                             // 已播过的声音不再重复识别
-    rec.startVideoTime = video.currentTime;
-    resetRecClock();
-    status('音画同步：已回带重播，之后字幕与声音实时对齐','ok');
-    toast('音画同步已开启：字幕与声音从现在起对齐');
-  }catch(e){}
-}
-function handleTranscript(out, tStart){
+/* ============ 滞后测量：声音→字幕的实测间隔（不做回带，采集流只能等于正在播的内容） ============ */
+setInterval(()=>{
+  if(!rec.active || doneFrontier<=0){ followLag=0; return; }
+  followLag = video.currentTime - (rec.startVideoTime + doneFrontier/sr);
+}, 250);
+function handleTranscript(out, task){
   const chunks=(out&&out.chunks)||[];
-  if(!chunks.length && out&&out.text){ chunks.push({timestamp:[0,settings.chunk], text:out.text}); }
+  if(!chunks.length && out&&out.text){
+    const vs=voicedSpan(task.start, task.end);     // 云端不给时间戳：用静音判据定出这段真正说话的首尾
+    chunks.push({ timestamp:vs, text:out.text });
+  }
   for(const c of chunks){
     let s=c.timestamp&&c.timestamp[0]!=null?c.timestamp[0]:0;
     let e=c.timestamp&&c.timestamp[1]!=null?c.timestamp[1]:s+3;
-    if(s>=settings.chunk-0.15) continue;               // 丢弃重叠区，避免重复
+    if(s>=task.dur-0.1) continue;                  // 丢弃落在下一段重叠区的结果
     const text=String(c.text||'').replace(/\s+/g,' ').trim();
     if(!text || text==='.'||text==='谢谢观看。') continue;
-    addLine(tStart+s, tStart+Math.min(e,settings.chunk+0.5), text);
+    addLine(task.tStart+s, task.tStart+Math.min(e,task.dur+0.5), text);
   }
 }
 
@@ -678,17 +700,21 @@ function handleTranscript(out, tStart){
 const lines=[]; const pending=[];
 function addLine(t0,t1,orig){
   const last=lines[lines.length-1];
-  if(last && last.orig===orig && t0-last.t1<1.2){ last.t1=t1; return; }   // 合并重复
-  const delay=Math.max(0, video.currentTime - t0);   // 云端识别耗时补偿：识别回来即可显示
-  const line={ t0, t1, orig, zh:null, el:null, delay };
-  lines.push(line); pending.push(line); gotCount++;
-  renderListItem(line);
+  if(last && last.orig===orig && t0-last.t1<1.2){ last.t1=Math.max(last.t1,t1); return; }   // 合并重复
+  // 一律按真实时间戳入列：识别本来就晚于声音，晚多少由状态栏「字幕滞后」反映，不再靠硬推补偿
+  const line={ t0, t1, orig, zh:null, el:null };
+  let i=lines.length; while(i>0 && lines[i-1].t0>t0) i--;
+  lines.splice(i,0,line); pending.push(line); gotCount++;
+  renderListItem(line, i);
 }
-function renderListItem(line){
+function renderListItem(line, idx){
   const div=document.createElement('div'); div.className='line';
   div.innerHTML='<span class="t">'+fmtT(line.t0)+'</span><div class="o"></div><div class="z"></div>';
   div.querySelector('.o').textContent=line.orig;
-  line.el=div; $('linesList').prepend(div);
+  line.el=div;
+  const box=$('linesList');                       // 列表倒序（新句在上）；并发返回可能乱序，按时间轴找位置插
+  const prev=lines[idx-1];                        // lines 升序、列表倒序：下面那条是时间更早的一句
+  box.insertBefore(div, prev&&prev.el ? prev.el : null);
 }
 function renderLineZh(line){
   if(line.el) line.el.querySelector('.z').textContent=line.zh||'…';
@@ -697,7 +723,8 @@ setInterval(()=>{ // 字幕显示循环
   const cur=video.currentTime + settings.offset/1000;
   let hit=null;
   for(let i=lines.length-1;i>=0;i--){ const L=lines[i];
-    if(L.t0+(L.delay||0)<=cur && cur<L.t1+(L.delay||0)+6){ hit=L; break; } if(L.t1+(L.delay||0)<cur-30) break; }
+    if(L.t0<=cur){ hit=L; break; } }                   // lines 已按时间排序：取最近已开始的那条
+  if(hit && cur > hit.t1+8) hit=null;                  // 收尾最多留 8 秒，之后的旧句不再挂着
   const o=$('subOrig'), z=$('subZh'), fb=$('subFallback');
   if(hit){
     const showOrig = settings.mode!=='zh';
@@ -818,23 +845,47 @@ function flushTranslate(){
 let trLastErr='';
 trTimer=setInterval(flushTranslate, 600);
 
-/* ============ 分段调度 + 静音检测 + 音量条 ============ */
+/* ============ 静音切句（VAD）+ 调度 + 音量条 ============ */
 let silentSec=0, bannerShown=false, micSilentSec=0;
-let sentCount=0, gotCount=0, lastText='';
+let sentCount=0, gotCount=0, lastText='', asrSecs=0;
+let noiseFloor=0.004;                                 // 噪底：降得快、升得慢，防连续说话把门限顶高后误判成静音
+function trackNoiseFloor(rms){
+  if(rms<noiseFloor) noiseFloor+=(rms-noiseFloor)*0.15; else noiseFloor+=(rms-noiseFloor)*0.002;
+  noiseFloor=Math.max(0.0006, Math.min(0.05, noiseFloor));
+}
+function voiceTh(){ return Math.max(0.008, Math.min(0.05, noiseFloor*3)); }
+const QUIET_ABS=0.012;                                // 只有绝对电平也这么低，才允许当作静音跳过
+function scanVoiced(startRaw,endRaw){                 // 一次扫描给出：最后有人声的位置 + 段内最大电平
+  let base=0, last=startRaw, mx=0; const th=voiceTh();
+  for(let i=0;i<rawChunks.length;i++){ const len=rawChunks[i].length, cEnd=base+len;
+    if(cEnd>startRaw && base<endRaw){ const v=rmsChunks[i]; if(v>mx) mx=v; if(v>=th) last=cEnd; }
+    base=cEnd; if(base>=endRaw) break; }
+  return { last:Math.min(last,endRaw), max:mx, th };
+}
+function voicedSpan(startRaw,endRaw){                 // 段内真正说话的首尾相对秒数，用来定字幕起止
+  let base=0, s=-1, e=-1; const th=voiceTh();
+  for(let i=0;i<rawChunks.length;i++){ const len=rawChunks[i].length, cEnd=base+len;
+    if(cEnd>startRaw && base<endRaw && rmsChunks[i]>=th){ if(s<0) s=Math.max(base,startRaw); e=Math.min(cEnd,endRaw); }
+    base=cEnd; if(base>=endRaw) break; }
+  if(s<0) return [0,(endRaw-startRaw)/sr];
+  const dur=(endRaw-startRaw)/sr;
+  return [Math.max(0,(s-startRaw)/sr-0.12), Math.min(dur,(e-startRaw)/sr+0.12)];
+}
 function hideBanner(){ $('banner').style.display='none'; bannerShown=false; }
 function tick(){
   if(!rec.active) return;
-  const needRaw=settings.chunk*sr;
-  if(totalRaw - rec.processedRaw >= needRaw){
-    const start=Math.max(0, rec.processedRaw - Math.min(1*sr, rec.processedRaw)); // 1s 重叠
-    const end=rec.processedRaw + needRaw;
-    const audio=slice16k(start, end);
-    const tStart=rec.startVideoTime + start/sr;
-    rec.processedRaw=end;
-    pruneRawSafe();
-    if(asrQueue.length>3) asrQueue.shift();            // 处理跟不上时丢弃最旧段
-    if(asrBusy) asrQueue.push({audio, t:tStart});
-    else runASR(audio, tStart);
+  const upto=Math.floor(totalRaw - 0.1*sr);           // 只用攒稳的样本，别切到半个包
+  const chunkRaw=settings.chunk*sr, minRaw=1.1*sr, silenceCut=0.42*sr;
+  while(upto-rec.processedRaw > 0.2*sr){
+    const segStart=rec.processedRaw, span=upto-segStart;
+    const scan=scanVoiced(segStart,upto), hasVoice=scan.last>segStart;
+    if(hasVoice && span>=minRaw && upto-scan.last>=silenceCut){        // 一句话说完（尾部静音 0.42s）→ 立刻送识别
+      sendTask(segStart,upto,false); rec.processedRaw=upto; pruneRawSafe(); continue; }
+    if(!hasVoice && scan.max<QUIET_ABS && span>=2*sr){                 // 确属静音：本地推进覆盖，不占网络
+      sendTask(segStart,upto,true); rec.processedRaw=upto; pruneRawSafe(); continue; }
+    if(span>=chunkRaw){                                                // 连续对白/含糊背景：到上限强制切，照常送识别
+      sendTask(segStart,upto,false); rec.processedRaw=upto; pruneRawSafe(); continue; }
+    break;
   }
   // 音量条
   if(analyser){
@@ -842,7 +893,11 @@ function tick(){
     let sum=0; for(let i=0;i<levelBuf.length;i++) sum+=levelBuf[i]*levelBuf[i];
     const rms=Math.sqrt(sum/levelBuf.length);
     const bars=Math.max(0,Math.min(10,Math.round(rms*160)));
-    $('level').textContent='音量 '+'▮'.repeat(bars)+'▯'.repeat(10-bars)+' | 识别段:'+sentCount+' 出句:'+gotCount+(lastText?' | 最近:「'+lastText+'」':'')+(trStr()?' | 译:'+trStr():'')+(trLastErr?' | 译误:'+trLastErr.slice(0,60):'');
+    const segAvg=sentCount?asrSecs/sentCount:0;
+    $('level').textContent='音量 '+'▮'.repeat(bars)+'▯'.repeat(10-bars)
+      +' | 识别段:'+sentCount+' 出句:'+gotCount+' | 段均:'+segAvg.toFixed(1)+'s'
+      +(rec.active?' | 字幕滞后:'+Math.max(0,followLag).toFixed(1)+'s 在途:'+inFlight:'')
+      +(lastText?' | 最近:「'+lastText+'」':'')+(trStr()?' | 译:'+trStr():'')+(trLastErr?' | 译误:'+trLastErr.slice(0,60):'');
     if(!micMode && rec.active && !video.paused){
       if(rms<0.004){
         silentSec++;
@@ -876,10 +931,10 @@ $('btnStart').onclick=async()=>{
     }
     resetRecClock();
     rec.active=true;
-    syncAnchor=video.currentTime; resynced=false; asrEpoch++;   // 音画同步：记录起点，首次出句后自动回带
-    rec.chunkTimer=setInterval(tick,1000);
+    asrEpoch++; followLag=0;                                     // 静音切句 + 并发识别
+    rec.chunkTimer=setInterval(tick,250);
     try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){}
-    status('识别运行中（'+settings.chunk+'s/段）…','ok');
+    status('识别运行中（一句话说完就送，上限 '+settings.chunk+'s）…','ok');
   }catch(err){
     const m=(err&&err.message)||String(err);
     let hint='';
@@ -892,10 +947,19 @@ $('btnStart').onclick=async()=>{
   $('btnStart').disabled=false;
 };
 $('btnStop').onclick=()=>{
-  rec.active=false; clearInterval(rec.chunkTimer); asrQueue=[];
+  rec.active=false; clearInterval(rec.chunkTimer); waitQueue.length=0; inFlight=0; followLag=0;
   if(wakeLock){ try{wakeLock.release();}catch(e){} wakeLock=null; }
   status('已停止。','warn');
 };
+/* 暂停/切后台时采集时钟照走、视频时间轴停住 → 字幕时间轴会漂，恢复后重新对齐一次 */
+let pausedAt=0;
+video.addEventListener('pause',()=>{ if(rec.active) pausedAt=Date.now(); });
+video.addEventListener('play',()=>{
+  if(rec.active && pausedAt && Date.now()-pausedAt>1500){
+    pausedAt=0; asrEpoch++; resetRecClock();
+    status('暂停过，字幕时间轴重新对齐（从当前位置继续识别）。','warn');
+  }
+});
 
 /* ============ 导出 / 清空 ============ */
 $('btnExport').onclick=()=>{
