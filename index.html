@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.3 直播抖动保护</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.4 自适应音量门限</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -128,7 +128,7 @@
         </select>
       </div>
     </div>
-    <div class="hint">静音自动切句：一句话说完就送识别，不必等满上限；上限只防连续对白不断流。</div>
+    <div class="hint">静音自动切句：一句话说完就送识别，不必等满上限；上限只防连续对白不断流。</div><div class="hint">状态里「音量 ▮▮ 0.0043/门限0.0010」是当前电平和本机说话门限：说话时前一个数应明显大于后一个；一直是 0.0000 说明根本没声音进来，点「麦克风拾音」。</div>
     <div id="cloudBox">
       <label class="fld">阿里云百炼 API Key（注册送额度，不充值不扣费，Key 只存本机）</label>
       <input type="password" id="asrKey" style="width:100%" placeholder="sk-...">
@@ -875,14 +875,21 @@ trTimer=setInterval(flushTranslate, 600);
 
 /* ============ 静音切句（VAD）+ 调度 + 音量条 ============ */
 let silentSec=0, bannerShown=false, micSilentSec=0;
+let recSince=0, noSegWarned=false;
 let sentCount=0, gotCount=0, lastText='', asrSecs=0;
-let noiseFloor=0.004;                                 // 噪底：降得快、升得慢，防连续说话把门限顶高后误判成静音
+/* 门限一律按实测电平相对判断：手机麦克风、偏安静的片源电平常只有 0.002～0.006，
+   写死 0.008 会把真实说话全判成静音 → 一句字幕都不出。 */
+let noiseFloor=0.0004;                                // 噪底：只在判为静音的块上更新，连续说话不会把门限顶高
+let peakHold=0.001;                                   // 近期峰值，缓慢回落，用来定相对门限
+function voiceTh(){ return Math.max(0.0008, noiseFloor*2.5, peakHold*0.15); }
 function trackNoiseFloor(rms){
-  if(rms<noiseFloor) noiseFloor+=(rms-noiseFloor)*0.15; else noiseFloor+=(rms-noiseFloor)*0.002;
-  noiseFloor=Math.max(0.0006, Math.min(0.05, noiseFloor));
+  if(rms<voiceTh()){                                  // 只在静音块上学噪声，避免把语音当噪底
+    noiseFloor += (rms-noiseFloor)*(rms<noiseFloor?0.15:0.02);
+    noiseFloor = Math.max(0.0002, Math.min(0.02, noiseFloor));
+  }
+  peakHold = Math.min(0.3, Math.max(rms, peakHold*0.998));
 }
-function voiceTh(){ return Math.max(0.008, Math.min(0.05, noiseFloor*3)); }
-const QUIET_ABS=0.012;                                // 只有绝对电平也这么低，才允许当作静音跳过
+const DEAD_ABS=0.0006;                                // 只有数字静音（iOS 没接到声音）才允许本地跳过不发网络
 function scanVoiced(startRaw,endRaw){                 // 一次扫描给出：最后有人声的位置 + 段内最大电平
   let base=0, last=startRaw, mx=0; const th=voiceTh();
   for(let i=0;i<rawChunks.length;i++){ const len=rawChunks[i].length, cEnd=base+len;
@@ -909,7 +916,7 @@ function tick(){
     const scan=scanVoiced(segStart,upto), hasVoice=scan.last>segStart;
     if(hasVoice && span>=minRaw && upto-scan.last>=silenceCut){        // 一句话说完（尾部静音 0.42s）→ 立刻送识别
       sendTask(segStart,upto,false); rec.processedRaw=upto; pruneRawSafe(); continue; }
-    if(!hasVoice && scan.max<QUIET_ABS && span>=2*sr){                 // 确属静音：本地推进覆盖，不占网络
+    if(!hasVoice && scan.max<DEAD_ABS && span>=2*sr){                  // 确认是数字静音：本地推进覆盖，不占网络
       sendTask(segStart,upto,true); rec.processedRaw=upto; pruneRawSafe(); continue; }
     if(span>=chunkRaw){                                                // 连续对白/含糊背景：到上限强制切，照常送识别
       sendTask(segStart,upto,false); rec.processedRaw=upto; pruneRawSafe(); continue; }
@@ -920,21 +927,28 @@ function tick(){
     analyser.getFloatTimeDomainData(levelBuf);
     let sum=0; for(let i=0;i<levelBuf.length;i++) sum+=levelBuf[i]*levelBuf[i];
     const rms=Math.sqrt(sum/levelBuf.length);
-    const bars=Math.max(0,Math.min(10,Math.round(rms*160)));
+    const db=20*Math.log10(Math.max(rms,1e-5));        // 对数刻度：安静的麦克风也能看出条
+    const bars=Math.max(0,Math.min(10,Math.round((db+70)/7)));
     const segAvg=sentCount?asrSecs/sentCount:0;
-    $('level').textContent='音量 '+'▮'.repeat(bars)+'▯'.repeat(10-bars)
+    $('level').textContent='音量 '+'▮'.repeat(bars)+'▯'.repeat(10-bars)+' '+rms.toFixed(4)
+      +(rec.active?'/门限'+voiceTh().toFixed(4):'')
       +' | 识别段:'+sentCount+' 出句:'+gotCount+' | 段均:'+segAvg.toFixed(1)+'s'
       +(rec.active?' | 字幕滞后:'+Math.max(0,followLag).toFixed(1)+'s 在途:'+inFlight:'')
       +(lastText?' | 最近:「'+lastText+'」':'')+(trStr()?' | 译:'+trStr():'')+(trLastErr?' | 译误:'+trLastErr.slice(0,60):'');
+    // 兜底告警：有信号却一直没送出识别段，必须让用户看见原因，不能再静悄悄
+    if(!noSegWarned && rec.active && recSince && Date.now()-recSince>20000 && sentCount===0 && peakHold>DEAD_ABS*3){
+      noSegWarned=true;
+      status('20 秒了还没送出任何识别段，但音频有信号（看下面音量条）。点「麦克风拾音」再试；仍不出句就把这条状态截图反馈。','err');
+    }
     if(!micMode && rec.active && !video.paused){
-      if(rms<0.004){
+      if(rms<DEAD_ABS){
         silentSec++;
         if(silentSec===4 && srcNode){ autoSwitchMic(); } // iOS UA伪装等场景：接管节点全零 → 自动转麦克风
         if(silentSec>=6 && !bannerShown){ $('banner').style.display='block'; bannerShown=true; }
-      } else { silentSec=0; if(bannerShown && rms>0.01) hideBanner(); }
+      } else { silentSec=0; if(bannerShown) hideBanner(); }
     }
     if(micMode && rec.active && !video.paused){
-      if(rms<0.004){ micSilentSec++; if(micSilentSec===8) status('麦克风没收到声音——请确认手机正在外放出声（音量开大、别静音、别戴耳机），且浏览器允许本页用麦克风','err'); }
+      if(rms<DEAD_ABS){ micSilentSec++; if(micSilentSec===8) status('麦克风没收到声音——请确认手机正在外放出声（音量开大、别静音、别戴耳机），且浏览器允许本页用麦克风','err'); }
       else micSilentSec=0;
     }
   }
@@ -959,6 +973,7 @@ $('btnStart').onclick=async()=>{
     }
     resetRecClock();
     rec.active=true;
+    recSince=Date.now(); noSegWarned=false;
     asrEpoch++; followLag=0;                                     // 静音切句 + 并发识别
     rec.chunkTimer=setInterval(tick,250);
     try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){}
@@ -975,7 +990,7 @@ $('btnStart').onclick=async()=>{
   $('btnStart').disabled=false;
 };
 $('btnStop').onclick=()=>{
-  rec.active=false; clearInterval(rec.chunkTimer); waitQueue.length=0; inFlight=0; followLag=0;
+  rec.active=false; recSince=0; clearInterval(rec.chunkTimer); waitQueue.length=0; inFlight=0; followLag=0;
   if(wakeLock){ try{wakeLock.release();}catch(e){} wakeLock=null; }
   status('已停止。','warn');
 };
