@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.2 翻译降级链</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.3 直播抖动保护</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -466,9 +466,11 @@ async function autoSwitchMic(){ // 接管视频声音后 4 秒仍全零（iOS �
 
 function onAudioData(f32){
   if(!rec.active) return;
-  rawChunks.push(f32); totalRaw += f32.length;
   let s=0; for(let i=0;i<f32.length;i++) s+=f32[i]*f32[i];
   const rms=Math.sqrt(s/f32.length);
+  // 缓冲/切台时 AudioContext 照常出块但全是零，若照样计数，采样数会跑在画面之前，字幕越推越晚 → 静音块直接丢
+  if(!micMode && rms<0.0008 && (video.paused || video.seeking || video.readyState<3)) return;
+  rawChunks.push(f32); totalRaw += f32.length;
   rmsChunks.push(rms); trackNoiseFloor(rms);          // 每块一个电平值，供静音切句用
 }
 /* 按原始采样区间切片并重采样到 16kHz（Whisper 输入要求） */
@@ -503,6 +505,9 @@ function resetRecClock(){
 }
 video.addEventListener('seeked',()=>{
   if(!rec.active) return;
+  // 直播追帧/缓冲引起的 1 秒内小跳变不算换进度：整段清零会丢掉正在说的那句话
+  const drift=Math.abs((video.currentTime||0) - (rec.startVideoTime + totalRaw/sr));
+  if(drift<1.0) return;
   resetRecClock(); asrEpoch++; inFlight=0; waitQueue.length=0; followLag=0;
   status('进度已变动，字幕时间轴重新对齐（从当前位置重新识别）。','warn');
 });
@@ -628,8 +633,13 @@ async function cloudTranscribe(audio16k){
   const parts=[{ type:'input_audio', input_audio:{ data:dataUri } }];  // 语种由模型自动检测（中/英/日/韩/粤语等）
   const body={ model:settings.asrModel||BL_MODEL, stream:false, messages:[{ role:'user', content:parts }] };
   let r;
-  try{ r=await fetch(BL_ASR,{ method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+settings.asrKey }, body:JSON.stringify(body) }); }
-  catch(e){ throw new Error('网络请求失败（可能被跨域拦截或无网络）：'+e.message); }
+  // 两段并发偶发 429：等 1.2 秒重试一次，别把整句丢掉
+  for(let attempt=0; attempt<2; attempt++){
+    try{ r=await fetch(BL_ASR,{ method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+settings.asrKey }, body:JSON.stringify(body) }); }
+    catch(e){ throw new Error('网络请求失败（可能被跨域拦截或无网络）：'+e.message); }
+    if(r.status!==429 || attempt===1) break;
+    await new Promise(res=>setTimeout(res,1200));
+  }
   if(!r.ok){
     let msg='HTTP '+r.status;
     try{ const d=await r.json(); const em=(d.error&&d.error.message)||d.message; if(em) msg+=' '+em; }catch(e){}
