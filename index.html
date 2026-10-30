@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.5 采集自愈</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.6 默认麦克风拾音</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -149,10 +149,11 @@
     <div class="row">
       <button id="btnStart" class="primary grow">开始识别</button>
       <button id="btnStop" class="danger narrow">停止</button>
-      <button id="btnMic" class="narrow">麦克风拾音：关</button>
+      <button id="btnMic" class="narrow primary">麦克风拾音：默认开</button>
       <button id="btnSrt" class="narrow">导入字幕</button>
       <input type="file" id="srtFile" accept=".srt,.vtt,.ass,.ssa,.txt" style="display:none">
     </div>
+    <div class="hint">默认用麦克风拾音：点「开始识别」时授权一次即可，手机要外放出声。想改用视频内部声音（不受外放音量影响），点一下「麦克风拾音」切成「默认关」。</div>
     <div class="status" id="status">待机。填好上方云端 Key 后点「开始识别」（一句话说完约 2～3 秒出字幕）；有现成字幕文件时点「导入字幕」更快更准。</div>
     <div class="status" id="level"></div>
   </div>
@@ -291,7 +292,7 @@ function fmtSrt(s){ const ms=Math.max(0,Math.round(s*1000)); const h=(ms/3600000
 /* ============ 设置持久化 ============ */
 const SET_KEY='msh_settings', TR_CACHE='msh_tr_cache';
 const settings = { asrMode:'cloud', asrKey:'', asrModel:'qwen3-asr-flash', model:'Xenova/whisper-tiny', lang:'en', chunk:10,
-  engine:'google', sl:'auto', apiBase:'', apiKey:'', apiModel:'', trModel:'qwen-flash', mode:'both', fontSize:19, offset:0 };try{ Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY)||'{}')); }catch(e){}
+  engine:'google', sl:'auto', apiBase:'', apiKey:'', apiModel:'', trModel:'qwen-flash', mode:'both', fontSize:19, offset:0, micPref:true };try{ Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY)||'{}')); }catch(e){}
 function saveSettings(){ localStorage.setItem(SET_KEY, JSON.stringify(settings)); }
 if(settings.engine==='google'){ settings.engine='bailian'; saveSettings(); } // 谷歌国内被墙，一次性迁移到百炼
 $('asrModeSel').value=settings.asrMode; $('asrKey').value=settings.asrKey; $('asrModel').value=settings.asrModel;
@@ -442,18 +443,35 @@ async function setMicMode(on){
     micStream = await navigator.mediaDevices.getUserMedia({audio:{ echoCancellation:false, noiseSuppression:false }});
     micNode = ctx.createMediaStreamSource(micStream);
     micMode=true; connectCapture();
-    $('btnMic').textContent='麦克风拾音：开'; $('btnMic').classList.add('primary');
-    resetRecClock(); toast('麦克风拾音已开启：请让设备靠近声源');
+    micBtnLabel();
+    resetRecClock(); toast('麦克风拾音已开启：请让手机外放出声（别戴耳机、别静音）');
 
   }else{
     if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
     micNode=null; micMode=false; connectCapture();
-    $('btnMic').textContent='麦克风拾音：关'; $('btnMic').classList.remove('primary');
+    micBtnLabel();
     resetRecClock();
   }
 }
-$('btnMic').onclick=async()=>{ try{ await ensureGraph(); await setMicMode(!micMode); }catch(e){ toast('麦克风开启失败：'+e.message); } };
-$('btnMicFromBanner').onclick=async()=>{ try{ await ensureGraph(); await setMicMode(true); hideBanner(); }catch(e){ toast('麦克风开启失败：'+e.message); } };
+/* 按钮显示的是「偏好」：没开始识别时显示默认开/关，开始后显示实际状态 */
+function micBtnLabel(){
+  const on = rec.active ? micMode : settings.micPref;
+  $('btnMic').textContent = rec.active ? ('麦克风拾音：'+(micMode?'开':'关'))
+                                       : ('麦克风拾音：'+(settings.micPref?'默认开':'默认关'));
+  $('btnMic').classList.toggle('primary', !!on);
+}
+$('btnMic').onclick=async()=>{
+  if(rec.active){
+    try{ await ensureGraph(); await setMicMode(!micMode); settings.micPref=micMode; saveSettings(); }
+    catch(e){ toast('麦克风开启失败：'+e.message); }
+  }else{
+    settings.micPref=!settings.micPref; saveSettings(); micBtnLabel();
+    toast(settings.micPref?'已设为默认麦克风拾音：点「开始识别」时会请求麦克风权限'
+                          :'已改为默认采集视频内部声音（不受外放音量影响）');
+  }
+};
+$('btnMicFromBanner').onclick=async()=>{ try{ await ensureGraph(); await setMicMode(true); settings.micPref=true; saveSettings(); hideBanner(); }catch(e){ toast('麦克风开启失败：'+e.message); } };
+micBtnLabel();
 
 let micAutoSwitched=false;
 async function autoSwitchMic(){ // 接管视频声音后 4 秒仍全零（iOS 限制/UA 伪装）→ 自动转麦克风，每次会话只试一次
@@ -943,7 +961,7 @@ function tick(){
     // 兜底告警：有信号却一直没送出识别段，必须让用户看见原因，不能再静悄悄
     if(!noSegWarned && rec.active && recSince && Date.now()-recSince>20000 && sentCount===0 && peakHold>DEAD_ABS*3){
       noSegWarned=true;
-      status('20 秒了还没送出任何识别段，但音频有信号（看下面音量条）。点「麦克风拾音」再试；仍不出句就把这条状态截图反馈。','err');
+      status('20 秒了还没送出任何识别段，但音频有信号（看下面音量条）。'+(micMode?'点「麦克风拾音」切成关，改用视频内部声音试试。':'点「麦克风拾音」开试试。')+'仍不出句就把这条状态截图反馈。','err');
     }
     if(!micMode && rec.active && !video.paused){
       if(rms<DEAD_ABS){
@@ -967,7 +985,7 @@ function tick(){
             micReverted=true; setMicMode(false);
             status('麦克风收不到声音，已切回视频内部采集（不受外放音量影响，更可靠）。','warn');
           } else {
-            status('麦克风没收到声音：iPhone 一开录音，外放常被切到听筒（音量键拧大也没用）。检查侧边静音拨片、别戴耳机；或让另一台设备外放、手机靠近它。','err');
+            status('麦克风没收到声音（iPhone 一开录音，外放常被切到听筒，音量键无效）。先点「麦克风拾音」切成「关」改用视频内部声音；仍不行就检查侧边静音拨片、别戴耳机。','err');
           }
         }
       } else micSilentSec=0;
@@ -984,9 +1002,12 @@ $('btnStart').onclick=async()=>{
   try{
     await ensureGraph();
     ctx.resume();
-    if(!srcNode && !micMode){ // iPhone / 跨域受限直链：拿不到视频内部声音，自动转麦克风拾音（视频声音不受影响）
+    if(settings.micPref && !micMode){          // 默认麦克风拾音（用户设定）
+      try{ await setMicMode(true); }
+      catch(e){ if(srcNode){ connectCapture(); toast('麦克风没授权，已改用视频内部声音'); } else throw e; }
+    } else if(!srcNode && !micMode){           // 拿不到视频内部声音（iOS 系统播放器/跨域受限）→ 只能麦克风
       await setMicMode(true);
-      toast('已自动切换麦克风拾音：请保持手机外放音量');
+      toast('拿不到视频内部声音，已自动改用麦克风拾音');
     } else if(!micMode){ connectCapture(); }
     if(settings.asrMode==='cloud'){
       if(!settings.asrKey) throw new Error('未填阿里云百炼 API Key —— 在上方「语音识别」卡片粘贴（获取步骤见该卡片提示）');
@@ -995,6 +1016,7 @@ $('btnStart').onclick=async()=>{
     }
     resetRecClock();
     rec.active=true;
+    micBtnLabel();
     recSince=Date.now(); noSegWarned=false;
     asrEpoch++; followLag=0;                                     // 静音切句 + 并发识别
     rec.chunkTimer=setInterval(tick,250);
@@ -1013,6 +1035,7 @@ $('btnStart').onclick=async()=>{
 };
 $('btnStop').onclick=()=>{
   rec.active=false; recSince=0; clearInterval(rec.chunkTimer); waitQueue.length=0; inFlight=0; followLag=0;
+  micBtnLabel();
   if(wakeLock){ try{wakeLock.release();}catch(e){} wakeLock=null; }
   status('已停止。','warn');
 };
