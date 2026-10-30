@@ -8,15 +8,20 @@
 <script src="hls.min.js"></script>
 <style>
   :root{
-    --bg:#0f1115; --card:#171a21; --card2:#1d212b; --line:#2a2f3a;
-    --txt:#e8eaf0; --dim:#9aa3b2; --acc:#4f8cff; --ok:#3ecf8e; --warn:#ffb454; --err:#ff6b6b;
+    --bg:#0b0c0f; --card:#14161b; --card2:#1b1e25; --line:#262a33;
+    --txt:#eef0f4; --dim:#8b93a3; --acc:#4f8cff; --ok:#3ecf8e; --warn:#ffb454; --err:#ff6b6b;
+    --subsize:19px;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
   html,body{margin:0; padding:0; background:var(--bg); color:var(--txt);
     font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
     font-size:15px; line-height:1.5;}
-  .wrap{max-width:720px; margin:0 auto; padding:12px 12px 40px}
-  h1{font-size:19px; margin:8px 0 2px}
+  .wrap{max-width:720px; margin:0 auto; padding:10px 12px 28px}
+  /* 主屏：只有标题、直链、播放器、一行控制、一行状态 */
+  .mainHead{display:flex; align-items:center; gap:10px; margin:2px 0 10px}
+  .mainHead h1{font-size:15px; font-weight:600; margin:0; letter-spacing:.02em}
+  #verTag{font-size:11px; color:var(--dim); font-weight:400}
+  .mainHead .sp{flex:1}
   .sub{color:var(--dim); font-size:12.5px; margin-bottom:12px}
   .card{background:var(--card); border:1px solid var(--line); border-radius:12px;
     padding:12px; margin-bottom:12px}
@@ -32,24 +37,66 @@
   button:active{filter:brightness(1.2)}
   button.primary{background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600}
   button.danger{background:transparent; border-color:var(--err); color:var(--err)}
+  button.ghost{background:transparent; border-color:var(--line); color:var(--dim)}
   button:disabled{opacity:.45; cursor:not-allowed}
-  .grow{flex:1 1 160px}
+  .grow{flex:1 1 120px}
   .narrow{flex:0 0 auto}
-  video{width:100%; aspect-ratio:16/9; background:#000; border-radius:10px; display:block}
-  .vwrap{position:relative}
-  #subOverlay{position:absolute; left:0; right:0; bottom:64px; padding:0 8%;
-    text-align:center; pointer-events:none; z-index:5;
-    transition:opacity .15s}
-  #subOrig{font-size:calc(var(--subsize,19px) * .72); color:#e0e0e0; opacity:.9;
-    text-shadow:0 1px 3px #000,0 0 2px #000; margin-bottom:2px; display:none}
-  #subZh{font-size:var(--subsize,19px); color:#fff; font-weight:600;
-    text-shadow:0 1px 4px #000,0 0 3px #000; display:none}
+  video{width:100%; aspect-ratio:16/9; background:#000; border-radius:12px; display:block}
+  .vwrap{position:relative; margin-top:10px}
+  .vstage{position:relative}
+  /* 字幕：视频内下方居中，原文与译文都是白字硬黑边 */
+  #subOverlay{position:absolute; left:0; right:0; bottom:42px; padding:0 6%;
+    text-align:center; pointer-events:none; z-index:5; transition:opacity .15s}
+  #subOrig,#subZh{color:#fff; text-shadow:
+    -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
+    -1px 0 0 #000, 1px 0 0 #000, 0 -1px 0 #000, 0 1px 0 #000,
+    0 2px 6px rgba(0,0,0,.85);}
+  #subOrig{font-size:calc(var(--subsize) * .76); font-weight:500; line-height:1.35;
+    margin-bottom:3px; display:none}
+  #subZh{font-size:var(--subsize); font-weight:700; line-height:1.35; display:none}
+  .fsBtn{position:absolute; top:8px; right:8px; z-index:7; padding:5px 10px;
+    border-radius:14px; font-size:12px; line-height:1.4;
+    background:rgba(0,0,0,.5); border-color:rgba(255,255,255,.22); color:#fff}
+  .ctl{flex-wrap:nowrap}
+  .ctl button{padding:9px 10px}
+  .ctl .grow{flex:1 1 90px}
+  /* 网页全屏：容器铺满视口，字幕覆盖层跟着一起全屏（iOS 原生全屏看不到网页字幕） */
+  body.webfs{overflow:hidden}
+  body.webfs .wrap{max-width:none; padding:0}
+  body.webfs .vwrap{position:fixed; inset:0; margin:0; z-index:50; background:#000;
+    display:flex; align-items:center; justify-content:center}
+  /* 画面盒自己贴着视频比例，字幕才不会掉到竖屏上下的黑边里 */
+  body.webfs .vstage{width:100%}
+  body.webfs video{width:100%; height:auto; max-height:100vh; aspect-ratio:auto;
+    object-fit:contain; border-radius:0}
+  body.webfs #subOverlay{bottom:44px; padding:0 8%}   /* 让开 iOS 原生控制条（约 40px 高） */
+  body.webfs .fsBtn{background:rgba(0,0,0,.6)}
   #banner{display:none; margin:10px 0 0; padding:9px 10px; border-radius:8px;
     background:rgba(255,180,84,.12); border:1px solid var(--warn); color:var(--warn); font-size:13px}
   #banner button{margin-top:6px}
-  .status{color:var(--dim); font-size:12.5px; margin-top:8px; word-break:break-all}
+  .status{color:var(--dim); font-size:12px; margin-top:9px; word-break:break-all}
   .status.ok{color:var(--ok)} .status.err{color:var(--err)} .status.warn{color:var(--warn)}
-  #level{font-size:11px; color:var(--dim); letter-spacing:1px}
+  .diagRow{display:flex; align-items:center; gap:8px; margin-top:2px}
+  .diagRow .sp{flex:1}
+  #btnDiag{background:none; border:0; padding:2px 0; font-size:11.5px; color:var(--dim); text-decoration:underline}
+  #level{font-size:11px; color:var(--dim); letter-spacing:.5px; word-break:break-all}
+  /* 设置面板：整屏上滑，内部按区块分隔，不再套一层层卡片 */
+  #sheet{display:none; position:fixed; inset:0; z-index:60; background:var(--bg)}
+  body.sheetOpen{overflow:hidden}
+  #sheet.open{display:block; animation:slideUp .18s ease-out}
+  @keyframes slideUp{from{transform:translateY(14px); opacity:.4} to{transform:none; opacity:1}}
+  .sheetHead{position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:10px;
+    padding:10px 12px; background:rgba(11,12,15,.94); border-bottom:1px solid var(--line);
+    backdrop-filter:blur(8px)}
+  .sheetHead b{font-size:15px; font-weight:600}
+  .sheetHead .sp{flex:1}
+  .sheetBody{max-width:720px; margin:0 auto; padding:4px 14px 40px;
+    height:calc(100% - 47px); overflow-y:auto; -webkit-overflow-scrolling:touch}
+  .sheetBody .card{background:transparent; border:0; border-bottom:1px solid var(--line);
+    border-radius:0; padding:16px 0; margin:0}
+  .sheetBody .card:last-child{border-bottom:0}
+  .sheetBody .card h2{font-size:12.5px; color:var(--dim); font-weight:600;
+    letter-spacing:.08em; margin:0 0 10px}
   label.fld{display:block; font-size:12.5px; color:var(--dim); margin:8px 0 4px}
   .grid2{display:grid; grid-template-columns:1fr 1fr; gap:8px}
   .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px}
@@ -71,30 +118,44 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.9 麦克风提示自愈</b></div>
+  <div class="mainHead">
+    <h1>观影字幕助手</h1><b id="verTag">v6.5.0 界面精简</b>
+    <span class="sp"></span>
+    <button id="btnSettings" class="ghost narrow">设置</button>
+  </div>
 
-  <!-- 播放器 -->
-  <div class="card">
-    <div class="row">
-      <input type="text" id="urlInput" class="grow" placeholder="粘贴 m3u8 / mp4 视频直链" autocapitalize="off" autocorrect="off">
-      <button id="btnOpen" class="primary narrow">打开</button>
-    </div>
-    <div class="hint">测试直链：<a href="#" onclick="openUrl('https://rch01e-alive-hls.akamaized.net/38fb45b25cdb05a1/out/v1/4e907bfabc684a1dae10df8431a84d21/index.m3u8');return false">日语直播24h（气象解说·可降档）</a> · <a href="#" onclick="openUrl('https://cdn-apne1.tsv2.amagi.tv/linear/amg01287-rakutentvjapan-news1hlscmaf-rakutenjp/playlist.m3u8');return false">日语新闻24h（主播不停口）</a> · <a href="#" onclick="openUrl('https://media.w3.org/2010/05/sintel/trailer.mp4');return false">英语对白 mp4</a> · <a href="#" onclick="openUrl('https://sf1-cdn-tos.huoshanstatic.com/obj/media-fe/xgplayer_doc_video/hls/xgplayer-demo.m3u8');return false">国内CDN（中文）</a></div>
-    <div style="height:10px"></div>
-    <div class="vwrap">
+  <div class="row">
+    <input type="text" id="urlInput" class="grow" placeholder="粘贴 m3u8 / mp4 视频直链" autocapitalize="off" autocorrect="off">
+    <button id="btnOpen" class="primary narrow">打开</button>
+  </div>
+
+  <div class="vwrap">
+    <div class="vstage">
       <video id="video" controls playsinline preload="metadata"></video>
       <div id="subOverlay"><div id="subOrig"></div><div id="subZh"></div></div>
-    </div>
-    <div id="subFallback" style="display:none; text-align:center; padding:8px 10px; margin-top:8px; background:#000; border:1px solid var(--line); border-radius:10px">
-      <div id="fbOrig" style="font-size:13px; color:#cfd6e4; opacity:.85; margin-bottom:2px"></div>
-      <div id="fbZh" style="font-size:20px; color:#fff; font-weight:700; line-height:1.4"></div>
-    </div>
-    <div id="banner">
-      检测不到视频声音（该直链受跨域限制）。建议换一个播放源；或切「麦克风拾音」让麦克风对着声源继续识别，效果受环境影响。
-      <br><button id="btnMicFromBanner" class="primary">切换麦克风拾音</button>
+      <button id="btnFs" class="fsBtn">全屏</button>
     </div>
   </div>
+
+  <div class="row ctl" style="margin-top:10px">
+    <button id="btnStart" class="primary grow">开始识别</button>
+    <button id="btnStop" class="danger narrow">停止</button>
+    <button id="btnMic" class="narrow primary">麦克风：默认开</button>
+  </div>
+
+  <div class="status" id="status">待机。先在「设置」里填好百炼 Key，再点「开始识别」；有现成字幕文件可在「设置 → 字幕记录」导入，更快更准。</div>
+  <div class="diagRow"><span class="sp"></span><button id="btnDiag">诊断</button></div>
+
+  <div id="banner">
+    检测不到视频声音（该直链受跨域限制）。建议换一个播放源；或切「麦克风」让麦克风对着声源继续识别，效果受环境影响。
+    <br><button id="btnMicFromBanner" class="primary">切换麦克风</button>
+  </div>
+</div>
+
+<!-- 设置面板：主屏之外的全部东西都在这里 -->
+<div id="sheet">
+  <div class="sheetHead"><b>设置</b><span class="sp"></span><button id="btnCloseSheet" class="ghost narrow">关闭</button></div>
+  <div class="sheetBody">
 
   <!-- 语音识别 -->
   <div class="card">
@@ -128,7 +189,7 @@
         </select>
       </div>
     </div>
-    <div class="hint">静音自动切句：一句话说完就送识别，不必等满上限；上限只防连续对白不断流。最短 2.6 秒一段——切太碎会触发百炼限流（429），被限流时页面会自动放慢并重试，状态栏显示「限速」。</div><div class="hint">状态里「音量 ▮▮ 0.0043/门限0.0010」是当前电平和本机说话门限：说话时前一个数应明显大于后一个；一直是 0.0000 说明根本没声音进来，点「麦克风拾音」。</div>
+    <div class="hint">静音自动切句：一句话说完就送识别，不必等满上限；上限只防连续对白不断流。最短 2.6 秒一段——切太碎会触发百炼限流（429），被限流时页面会自动放慢并重试，「诊断」里显示「限速」。</div>
     <div id="cloudBox">
       <label class="fld">阿里云百炼 API Key（注册送额度，不充值不扣费，Key 只存本机）</label>
       <input type="password" id="asrKey" style="width:100%" placeholder="sk-...">
@@ -145,17 +206,7 @@
         <option value="Xenova/whisper-base">base 多语言（约80MB）</option>
       </select>
     </div>
-    <div style="height:10px"></div>
-    <div class="row">
-      <button id="btnStart" class="primary grow">开始识别</button>
-      <button id="btnStop" class="danger narrow">停止</button>
-      <button id="btnMic" class="narrow primary">麦克风拾音：默认开</button>
-      <button id="btnSrt" class="narrow">导入字幕</button>
-      <input type="file" id="srtFile" accept=".srt,.vtt,.ass,.ssa,.txt" style="display:none">
-    </div>
-    <div class="hint">默认用麦克风拾音：点「开始识别」时授权一次即可，手机要外放出声。想改用视频内部声音（不受外放音量影响），点一下「麦克风拾音」切成「默认关」。</div>
-    <div class="status" id="status">待机。填好上方云端 Key 后点「开始识别」（一句话说完约 2～3 秒出字幕）；有现成字幕文件时点「导入字幕」更快更准。</div>
-    <div class="status" id="level"></div>
+    <div class="hint">采集默认用麦克风：点主屏「开始识别」时授权一次即可。v6.4.9 起会自动挑有声音的那条路——麦克风收不到而视频内部声音正常时，1.5 秒内自动改用直采；你手动点过「麦克风」按钮则以你的选择为准。</div>
   </div>
 
   <!-- 翻译设置 -->
@@ -219,17 +270,35 @@
         <input type="range" id="offset" min="-5000" max="5000" step="100" value="0">
       </div>
     </div>
-    <div class="hint">状态栏的「字幕滞后」是声音到字幕的实测间隔。想让它显示得更久一点，用「偏移」把时间轴往后挪。</div>
+    <div class="hint">「诊断」里的「字幕滞后」是声音到字幕的实测间隔。想让它显示得更久一点，用「偏移」把时间轴往后挪。</div>
   </div>
 
   <!-- 字幕记录 -->
   <div class="card">
     <h2>字幕记录</h2>
     <div class="row">
+      <button id="btnSrt" class="grow">导入字幕（SRT / VTT / ASS）</button>
+      <input type="file" id="srtFile" accept=".srt,.vtt,.ass,.ssa,.txt" style="display:none">
+    </div>
+    <div class="hint">有现成字幕文件时导入最快最准，导入后自动翻译，播放即显示。</div>
+    <div style="height:8px"></div>
+    <div class="row">
       <button id="btnExport" class="grow">导出 SRT 字幕文件</button>
       <button id="btnClear" class="danger narrow">清空</button>
     </div>
     <div id="linesList"></div>
+  </div>
+
+  <!-- 测试直链 -->
+  <div class="card">
+    <h2>测试直链</h2>
+    <div class="hint" style="margin-top:0">点一条直接开播，用来验证识别与字幕是否正常。</div>
+    <div class="hint">
+      <a href="#" onclick="openUrl('https://rch01e-alive-hls.akamaized.net/38fb45b25cdb05a1/out/v1/4e907bfabc684a1dae10df8431a84d21/index.m3u8');return false">日语直播24h（气象解说·可降档）</a><br>
+      <a href="#" onclick="openUrl('https://cdn-apne1.tsv2.amagi.tv/linear/amg01287-rakutentvjapan-news1hlscmaf-rakutenjp/playlist.m3u8');return false">日语新闻24h（主播不停口）</a><br>
+      <a href="#" onclick="openUrl('https://media.w3.org/2010/05/sintel/trailer.mp4');return false">英语对白 mp4</a><br>
+      <a href="#" onclick="openUrl('https://sf1-cdn-tos.huoshanstatic.com/obj/media-fe/xgplayer_doc_video/hls/xgplayer-demo.m3u8');return false">国内CDN（中文）</a>
+    </div>
   </div>
 
   <!-- 工具箱 -->
@@ -262,16 +331,25 @@
 
   <!-- 说明与限制 -->
   <div class="card faq">
-    <h2 style="color:var(--acc)">常见问题与限制</h2>
+    <h2>常见问题与限制</h2>
     <ul>
       <li><b>直链被防盗链/跨域拦截</b>：部分网站直链需要特定来源（Referer）才能访问，会加载失败，属于站点限制，可换播放源。</li>
-      <li><b>iOS 版本</b>：直链为 m3u8 时需 iOS 17.1+（支持 Managed Media Source）。iPhone 浏览器拿不到视频内部声音，开始识别会自动切到麦克风拾音（视频照常出声），请保持外放音量。Android Chrome 无此限制。</li>
-      <li><b>字幕滞后</b>：识别必须听完一句话才知道内容，所以字幕天然比声音晚，量级 = 句尾静音 0.4 秒 + 网络往返。静音切句加两段并发把这段压到约 2～3 秒（旧的固定 10 秒分段要 11 秒以上）。状态栏「字幕滞后」是实测值，觉得刺眼可用「偏移」微调显示时机。</li>
+      <li><b>全屏请用播放器右上角的「全屏」</b>：字幕是网页画在视频上的，iPhone 自带的原生全屏会切到系统播放器，网页字幕就看不见了。点播放器右上角「全屏」是网页全屏，字幕照常显示，同一位置点「退出」还原。</li>
+      <li><b>iOS 版本</b>：直链为 m3u8 时需 iOS 17.1+（支持 Managed Media Source）。拿不到视频内部声音时会自动用麦克风拾音（视频照常出声）；麦克风也收不到就自动切回直采，见「诊断」。Android Chrome 无此限制。</li>
+      <li><b>字幕滞后</b>：识别必须听完一句话才知道内容，所以字幕天然比声音晚，量级 = 句尾静音 0.4 秒 + 网络往返。静音切句加两段并发把这段压到约 2～3 秒（旧的固定 10 秒分段要 11 秒以上）。「诊断」里的「字幕滞后」是实测值，觉得刺眼可用「偏移」微调显示时机。</li>
       <li><b>准确率</b>：云端 qwen3-asr-flash 支持中英日韩等多语自动识别，远超本地小模型；本地模式对嘈杂/音乐背景识别较一般，英语内容建议选英语专用模型。</li>
       <li><b>云端 Key</b>：使用阿里云百炼 API（bailian.console.aliyun.com 支付宝/淘宝登录，新人各模型自动送免费额度），未充值账号额度用完即停不扣费，Key 只保存在你手机本地。</li>
       <li><b>保持前台</b>：锁屏或切后台后识别会暂停，已尽量申请屏幕常亮。</li>
       <li><b>版权提示</b>：本工具仅用于个人学习辅助理解，请遵守当地法律法规与网站服务条款。</li>
     </ul>
+  </div>
+
+  <!-- 诊断 -->
+  <div class="card" id="diagCard">
+    <h2>诊断</h2>
+    <div id="level"></div>
+    <div class="hint">「音量 ▮▮ 0.0043/门限0.0010」是当前电平和本机说话门限：说话时前一个数应明显大于后一个；一直是 0.0000 说明根本没声音进来。走麦克风时括号里的「直采电平」是视频内部声音的电平，用来判断该走哪条路。出问题就把这一行截图反馈。</div>
+  </div>
   </div>
 </div>
 <div id="toast"></div>
@@ -451,7 +529,7 @@ async function setMicMode(on){
     micNode = ctx.createMediaStreamSource(micStream);
     micMode=true; connectCapture();
     micBtnLabel();
-    resetRecClock(); toast('麦克风拾音已开启：请让手机外放出声（别戴耳机、别静音）');
+    resetRecClock(); toast('麦克风已开启：请让手机外放出声（别戴耳机、别静音）');
 
   }else{
     if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
@@ -463,8 +541,8 @@ async function setMicMode(on){
 /* 按钮显示的是「偏好」：没开始识别时显示默认开/关，开始后显示实际状态 */
 function micBtnLabel(){
   const on = rec.active ? micMode : settings.micPref;
-  $('btnMic').textContent = rec.active ? ('麦克风拾音：'+(micMode?'开':'关'))
-                                       : ('麦克风拾音：'+(settings.micPref?'默认开':'默认关'));
+  $('btnMic').textContent = rec.active ? ('麦克风：'+(micMode?'开':'关'))
+                                       : ('麦克风：'+(settings.micPref?'默认开':'默认关'));
   $('btnMic').classList.toggle('primary', !!on);
 }
 $('btnMic').onclick=async()=>{
@@ -481,6 +559,28 @@ $('btnMic').onclick=async()=>{
 $('btnMicFromBanner').onclick=async()=>{ micUserToggled=true; try{ await ensureGraph(); await setMicMode(true); settings.micPref=true; saveSettings(); hideBanner(); }catch(e){ toast('麦克风开启失败：'+e.message); } };
 micBtnLabel();
 
+/* ============ 设置面板 / 网页全屏 ============ */
+const sheetBody=document.querySelector('.sheetBody');
+function openSheet(anchor){
+  $('sheet').classList.add('open');
+  document.body.classList.add('sheetOpen');
+  sheetBody.scrollTop = anchor ? Math.max(0, $(anchor).offsetTop - sheetBody.offsetTop - 8) : 0;
+}
+function closeSheet(){ $('sheet').classList.remove('open'); document.body.classList.remove('sheetOpen'); }
+$('btnSettings').onclick=()=>openSheet();
+$('btnCloseSheet').onclick=closeSheet;
+$('btnDiag').onclick=()=>openSheet('diagCard');
+/* 网页全屏：把播放器容器铺满视口，字幕覆盖层跟着一起全屏。
+   iOS 原生全屏会切到系统播放器，网页画上去的字幕就没了，所以给一个能保住字幕的全屏。 */
+function setWebFs(on){
+  document.body.classList.toggle('webfs', on);
+  $('btnFs').textContent = on ? '退出' : '全屏';
+  if(on) closeSheet();
+}
+$('btnFs').onclick=()=>setWebFs(!document.body.classList.contains('webfs'));
+document.addEventListener('keydown',e=>{ if(e.key!=='Escape') return;
+  if(document.body.classList.contains('webfs')) setWebFs(false); else closeSheet(); });
+
 let micAutoSwitched=false;
 async function autoSwitchMic(){ // 接管视频声音后 4 秒仍全零（iOS 限制/UA 伪装）→ 自动转麦克风，每次会话只试一次
   if(micAutoSwitched) return; micAutoSwitched=true;
@@ -488,7 +588,7 @@ async function autoSwitchMic(){ // 接管视频声音后 4 秒仍全零（iOS �
     status('视频内部声音为空（iOS 限制），自动切换麦克风拾音…','warn');
     await setMicMode(true);
     toast('已切换麦克风拾音：请保持手机外放音量');
-  }catch(e){ status('自动切换麦克风失败：'+e.message+'（可手动点「麦克风拾音」按钮）','err'); micAutoSwitched=false; }
+  }catch(e){ status('自动切换麦克风失败：'+e.message+'（可手动点主屏「麦克风」按钮）','err'); micAutoSwitched=false; }
 }
 
 function onAudioData(f32){
@@ -805,7 +905,7 @@ setInterval(()=>{ // 字幕显示循环
   for(let i=lines.length-1;i>=0;i--){ const L=lines[i];
     if(L.t0<=cur){ hit=L; break; } }                   // lines 已按时间排序：取最近已开始的那条
   if(hit && cur > hit.t1+8) hit=null;                  // 收尾最多留 8 秒，之后的旧句不再挂着
-  const o=$('subOrig'), z=$('subZh'), fb=$('subFallback');
+  const o=$('subOrig'), z=$('subZh');
   if(hit){
     const showOrig = settings.mode!=='zh';
     const zhPending = hit.zh==null;                 // 译文还在路上
@@ -813,12 +913,7 @@ setInterval(()=>{ // 字幕显示循环
     const zhShown = hasZh ? hit.zh : (zhPending ? '…' : hit.orig);
     if(showOrig){ o.textContent=hit.orig; o.style.display='block'; } else o.style.display='none';
     if(settings.mode!=='orig'){ z.textContent=zhShown; z.style.display='block'; } else z.style.display='none';
-    // 备用字幕条（视频下方文档流，全屏/覆盖层失效时兜底）
-    fb.style.display='block';
-    $('fbOrig').textContent = showOrig?hit.orig:'';
-    $('fbOrig').style.display = showOrig?'block':'none';
-    $('fbZh').textContent = zhShown;
-  } else { o.style.display='none'; z.style.display='none'; fb.style.display='none'; }
+  } else { o.style.display='none'; z.style.display='none'; }
 }, 200);
 
 /* ============ 翻译（多引擎 + 缓存 + 失败降级） ============ */
@@ -1019,7 +1114,7 @@ function tick(){
     // 兜底告警：有信号却一直没送出识别段，必须让用户看见原因，不能再静悄悄
     if(!noSegWarned && rec.active && recSince && Date.now()-recSince>20000 && sentCount===0 && peakHold>DEAD_ABS*3){
       noSegWarned=true;
-      status('20 秒了还没送出任何识别段，但音频有信号（看下面音量条）。'+(micMode?'点「麦克风拾音」切成关，改用视频内部声音试试。':'点「麦克风拾音」开试试。')+'仍不出句就把这条状态截图反馈。','warn');
+      status('20 秒了还没送出任何识别段，但音频有信号（点状态行右边的「诊断」看音量条）。'+(micMode?'点「麦克风」切成关，改用视频内部声音试试。':'点「麦克风」开试试。')+'仍不出句就把诊断截图反馈。','warn');
     }
     if(!micMode && rec.active && !video.paused){
       if(rms<DEAD_ABS){
@@ -1034,7 +1129,7 @@ function tick(){
     if(micMode && rec.active && !video.paused){
       const tr=micStream&&micStream.getAudioTracks()[0];
       if(tr && (tr.muted || tr.readyState!=='live')){
-        micWarn('cut','麦克风被系统掐断了（'+(tr.muted?'muted':tr.readyState)+'）：iOS 切后台/来电后会这样，点一下「麦克风拾音」重开。');
+        micWarn('cut','麦克风被系统掐断了（'+(tr.muted?'muted':tr.readyState)+'）：iOS 切后台/来电后会这样，点一下主屏「麦克风」重开。');
       }
       // iOS 开录音后外放常被切到听筒：麦克风要么全零，要么只剩极弱的漏音，都比直采差得多
       const srcUsable = srcNode && !tainted && srcRms>DEAD_ABS*4;   // 直采确实有声音（安静片源也算）
@@ -1047,7 +1142,7 @@ function tick(){
           micReverted=true; setMicMode(false);
           status('麦克风声音太弱（iPhone 开录音会把外放切到听筒），已自动改用视频内部采集（时间轴不变，字幕照常同步）。','warn');
         } else if(micSilentSec===8){
-          micWarn('silent','麦克风没收到声音（iPhone 一开录音，外放常被切到听筒，音量键无效）。点「麦克风拾音」切成「关」改用视频内部声音；仍不行就检查侧边静音拨片、别戴耳机。');
+          micWarn('silent','麦克风没收到声音（iPhone 一开录音，外放常被切到听筒，音量键无效）。点主屏「麦克风」切成「关」改用视频内部声音；仍不行就检查侧边静音拨片、别戴耳机。');
         }
       } else micSilentSec=0;
     }
