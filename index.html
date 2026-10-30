@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.8 翻译失败原因可见</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.9 麦克风提示自愈</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -350,7 +350,8 @@ function openUrl(u){
   u=(u||'').trim(); if(!u) return toast('请输入视频直链');
   if(!/^https?:\/\//i.test(u)) u='https://'+u;
   urlCurrent=u; tryingCors=false; tainted=false;
-  micAutoSwitched=false; micReverted=false; silentFromT=-1; silentSec=0; micSilentSec=0;   // 换源重新给一次自动判定的机会
+  micAutoSwitched=false; micReverted=false; micUserToggled=false; silentFromT=-1; silentSec=0; micSilentSec=0;   // 换源重新给一次自动判定的机会
+  for(const k in micWarnAt) delete micWarnAt[k];
   if(!/\.m3u8(\?|#|$)/i.test(u) && !/\.(mp4|webm|mkv|flv|ts|m4v|mov|m4a|aac)(\?|#|$)/i.test(u)){
     toast('这是网页地址而非视频直链，多半无法播放。请用「工具箱」书签脚本提取 m3u8/mp4 直链');
   }
@@ -404,6 +405,7 @@ class CaptureProcessor extends AudioWorkletProcessor{
 registerProcessor('capture-processor', CaptureProcessor);`;
 
 let ctx=null, srcNode=null, analyser=null, workletNode=null, micNode=null, micStream=null, micMode=false;
+let srcAnalyser=null, srcLevelBuf=null, srcTap=null;   // 麦克风模式下也要能看见直采电平，才能判断该不该切回去
 let rawChunks=[], rmsChunks=[], totalRaw=0, sr=48000, levelBuf=null;
 const rec = { active:false, startVideoTime:0, processedRaw:0, chunkTimer:null };
 /* doneFrontier = 已识别覆盖到的采样位置；currentTime 减它 = 实测字幕滞后 */
@@ -418,6 +420,10 @@ async function ensureGraph(){
     await ctx.audioWorklet.addModule(wUrl);            // 注册音频捕获处理器（必须先于创建节点）
     analyser = ctx.createAnalyser(); analyser.fftSize=2048;
     levelBuf = new Float32Array(analyser.fftSize);
+    srcAnalyser = ctx.createAnalyser(); srcAnalyser.fftSize=1024;
+    srcLevelBuf = new Float32Array(srcAnalyser.fftSize);
+    srcTap = ctx.createGain(); srcTap.gain.value=0;      // 零增益落地：保证 analyser 被拉取，又不会多出一路声音
+    srcAnalyser.connect(srcTap); srcTap.connect(ctx.destination);
     workletNode = new AudioWorkletNode(ctx,'capture-processor');
     workletNode.port.onmessage = e=>onAudioData(e.data);
   }
@@ -435,6 +441,7 @@ function connectCapture(){
   if(micMode && micNode){ micNode.connect(analyser); micNode.connect(workletNode); } // 麦克风只收音不回放（防啸叫）
   if(srcNode){
     if(!micMode){ srcNode.connect(analyser); srcNode.connect(workletNode); }
+    srcNode.connect(srcAnalyser);   // 无论走哪条路都监看直采电平
     srcNode.connect(ctx.destination); // 视频照常出声
   }
 }
@@ -462,6 +469,7 @@ function micBtnLabel(){
 }
 $('btnMic').onclick=async()=>{
   if(rec.active){
+    micUserToggled=true;                              // 手动选择优先，自愈逻辑不再推翻
     try{ await ensureGraph(); await setMicMode(!micMode); settings.micPref=micMode; saveSettings(); }
     catch(e){ toast('麦克风开启失败：'+e.message); }
   }else{
@@ -470,7 +478,7 @@ $('btnMic').onclick=async()=>{
                           :'已改为默认采集视频内部声音（不受外放音量影响）');
   }
 };
-$('btnMicFromBanner').onclick=async()=>{ try{ await ensureGraph(); await setMicMode(true); settings.micPref=true; saveSettings(); hideBanner(); }catch(e){ toast('麦克风开启失败：'+e.message); } };
+$('btnMicFromBanner').onclick=async()=>{ micUserToggled=true; try{ await ensureGraph(); await setMicMode(true); settings.micPref=true; saveSettings(); hideBanner(); }catch(e){ toast('麦克风开启失败：'+e.message); } };
 micBtnLabel();
 
 let micAutoSwitched=false;
@@ -930,6 +938,13 @@ trTimer=setInterval(flushTranslate, 600);
 /* ============ 静音切句（VAD）+ 调度 + 音量条 ============ */
 let silentSec=0, bannerShown=false, micSilentSec=0;
 let silentFromT=-1, micReverted=false;
+let micUserToggled=false;                             // 用户自己点过按钮 → 不再自动替他换采集路径
+const micWarnAt={};
+function micWarn(key,msg){                            // 麦克风提示每 250ms 就会命中一次，不节流会一直刷红字
+  const now=Date.now();
+  if(micWarnAt[key] && now-micWarnAt[key]<60000) return;
+  micWarnAt[key]=now; status(msg,'warn');
+}
 let recSince=0, noSegWarned=false;
 let sentCount=0, gotCount=0, lastText='', asrSecs=0;
 /* 门限一律按实测电平相对判断：手机麦克风、偏安静的片源电平常只有 0.002～0.006，
@@ -985,11 +1000,18 @@ function tick(){
     const rms=Math.sqrt(sum/levelBuf.length);
     const db=20*Math.log10(Math.max(rms,1e-5));        // 对数刻度：安静的麦克风也能看出条
     const bars=Math.max(0,Math.min(10,Math.round((db+70)/7)));
+    let srcRms=0;                                     // 走麦克风时也要知道视频内部到底有没有声音，才能自动切回去
+    if(srcAnalyser && srcNode){
+      srcAnalyser.getFloatTimeDomainData(srcLevelBuf);
+      let s2=0; for(let i=0;i<srcLevelBuf.length;i++) s2+=srcLevelBuf[i]*srcLevelBuf[i];
+      srcRms=Math.sqrt(s2/srcLevelBuf.length);
+    }
     const segAvg=sentCount?asrSecs/sentCount:0;
     const capPath = micMode?'麦克风':(srcNode?'直采':'未接上');
     $('level').textContent='音量 '+'▮'.repeat(bars)+'▯'.repeat(10-bars)+' '+rms.toFixed(4)
       +(rec.active?'/门限'+voiceTh().toFixed(4):'')
-      +' | 采集:'+capPath+(ctx&&ctx.state!=='running'?'(音频'+ctx.state+')':'')
+      +' | 采集:'+capPath+(micMode&&srcNode?'(直采电平'+srcRms.toFixed(4)+')':'')
+      +(ctx&&ctx.state!=='running'?'(音频'+ctx.state+')':'')
       +' | 识别段:'+sentCount+' 出句:'+gotCount+' | 段均:'+segAvg.toFixed(1)+'s'
       +(rec.active?' | 字幕滞后:'+Math.max(0,followLag).toFixed(1)+'s 在途:'+inFlight:'')
       +(rec.active&&(flightCap<2||asrGapMs>1000)?' | 限速:'+(asrGapMs/1000).toFixed(1)+'s/并发'+flightCap:'')
@@ -997,7 +1019,7 @@ function tick(){
     // 兜底告警：有信号却一直没送出识别段，必须让用户看见原因，不能再静悄悄
     if(!noSegWarned && rec.active && recSince && Date.now()-recSince>20000 && sentCount===0 && peakHold>DEAD_ABS*3){
       noSegWarned=true;
-      status('20 秒了还没送出任何识别段，但音频有信号（看下面音量条）。'+(micMode?'点「麦克风拾音」切成关，改用视频内部声音试试。':'点「麦克风拾音」开试试。')+'仍不出句就把这条状态截图反馈。','err');
+      status('20 秒了还没送出任何识别段，但音频有信号（看下面音量条）。'+(micMode?'点「麦克风拾音」切成关，改用视频内部声音试试。':'点「麦克风拾音」开试试。')+'仍不出句就把这条状态截图反馈。','warn');
     }
     if(!micMode && rec.active && !video.paused){
       if(rms<DEAD_ABS){
@@ -1012,17 +1034,20 @@ function tick(){
     if(micMode && rec.active && !video.paused){
       const tr=micStream&&micStream.getAudioTracks()[0];
       if(tr && (tr.muted || tr.readyState!=='live')){
-        status('麦克风被系统掐断了（'+(tr.muted?'muted':tr.readyState)+'）：iOS 切后台/来电后会这样，点一下「麦克风拾音」重开。','err');
+        micWarn('cut','麦克风被系统掐断了（'+(tr.muted?'muted':tr.readyState)+'）：iOS 切后台/来电后会这样，点一下「麦克风拾音」重开。');
       }
-      if(rms<DEAD_ABS){
+      // iOS 开录音后外放常被切到听筒：麦克风要么全零，要么只剩极弱的漏音，都比直采差得多
+      const srcUsable = srcNode && !tainted && srcRms>DEAD_ABS*4;   // 直采确实有声音（安静片源也算）
+      const srcStrong = srcUsable && srcRms>0.01;                   // 强到足以判定麦克风那点只是漏音
+      const micBad = rms<DEAD_ABS || (srcStrong && rms<srcRms*0.2);
+      if(micBad){
         micSilentSec++;
-        if(micSilentSec===8){
-          if(srcNode && !tainted && !micReverted && micAutoSwitched){  // 只收回「自动切过去」的那次，别推翻用户手动选的麦克风
-            micReverted=true; setMicMode(false);
-            status('麦克风收不到声音，已切回视频内部采集（不受外放音量影响，更可靠）。','warn');
-          } else {
-            status('麦克风没收到声音（iPhone 一开录音，外放常被切到听筒，音量键无效）。先点「麦克风拾音」切成「关」改用视频内部声音；仍不行就检查侧边静音拨片、别戴耳机。','err');
-          }
+        // 视频内部明明有更好的声音 → 直接用那条，别让用户一直看提示
+        if(micSilentSec>=6 && srcUsable && !micReverted && !micUserToggled){
+          micReverted=true; setMicMode(false);
+          status('麦克风声音太弱（iPhone 开录音会把外放切到听筒），已自动改用视频内部采集（时间轴不变，字幕照常同步）。','warn');
+        } else if(micSilentSec===8){
+          micWarn('silent','麦克风没收到声音（iPhone 一开录音，外放常被切到听筒，音量键无效）。点「麦克风拾音」切成「关」改用视频内部声音；仍不行就检查侧边静音拨片、别戴耳机。');
         }
       } else micSilentSec=0;
     }
