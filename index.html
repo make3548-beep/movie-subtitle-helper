@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.6 默认麦克风拾音</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.7 识别自动限速</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -128,7 +128,7 @@
         </select>
       </div>
     </div>
-    <div class="hint">静音自动切句：一句话说完就送识别，不必等满上限；上限只防连续对白不断流。</div><div class="hint">状态里「音量 ▮▮ 0.0043/门限0.0010」是当前电平和本机说话门限：说话时前一个数应明显大于后一个；一直是 0.0000 说明根本没声音进来，点「麦克风拾音」。</div>
+    <div class="hint">静音自动切句：一句话说完就送识别，不必等满上限；上限只防连续对白不断流。最短 2.6 秒一段——切太碎会触发百炼限流（429），被限流时页面会自动放慢并重试，状态栏显示「限速」。</div><div class="hint">状态里「音量 ▮▮ 0.0043/门限0.0010」是当前电平和本机说话门限：说话时前一个数应明显大于后一个；一直是 0.0000 说明根本没声音进来，点「麦克风拾音」。</div>
     <div id="cloudBox">
       <label class="fld">阿里云百炼 API Key（注册送额度，不充值不扣费，Key 只存本机）</label>
       <input type="password" id="asrKey" style="width:100%" placeholder="sk-...">
@@ -652,13 +652,8 @@ async function cloudTranscribe(audio16k){
   const parts=[{ type:'input_audio', input_audio:{ data:dataUri } }];  // 语种由模型自动检测（中/英/日/韩/粤语等）
   const body={ model:settings.asrModel||BL_MODEL, stream:false, messages:[{ role:'user', content:parts }] };
   let r;
-  // 两段并发偶发 429：等 1.2 秒重试一次，别把整句丢掉
-  for(let attempt=0; attempt<2; attempt++){
-    try{ r=await fetch(BL_ASR,{ method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+settings.asrKey }, body:JSON.stringify(body) }); }
-    catch(e){ throw new Error('网络请求失败（可能被跨域拦截或无网络）：'+e.message); }
-    if(r.status!==429 || attempt===1) break;
-    await new Promise(res=>setTimeout(res,1200));
-  }
+  try{ r=await fetch(BL_ASR,{ method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+settings.asrKey }, body:JSON.stringify(body) }); }
+  catch(e){ throw new Error('网络请求失败（可能被跨域拦截或无网络）：'+e.message); }
   if(!r.ok){
     let msg='HTTP '+r.status;
     try{ const d=await r.json(); const em=(d.error&&d.error.message)||d.message; if(em) msg+=' '+em; }catch(e){}
@@ -672,7 +667,9 @@ async function cloudTranscribe(audio16k){
 }
 /* ============ 识别调度：在途并发 + 已识别覆盖前沿 ============ */
 let asrEpoch=0, inFlight=0; const waitQueue=[];
-const MAX_FLIGHT=2;                          // 同时在途最多 2 段：既压低滞后又防限流
+/* 限流自适应：百炼免费额度 QPS 很低，段均 2 秒时每分钟 40+ 次请求必被 429。
+   默认两次请求至少隔 1 秒；一旦 429 就降为单并发并加大间隔，连续成功后再慢慢恢复。 */
+let flightCap=2, asrGapMs=1000, asrGateUntil=0, okStreak=0, throttleN=0, pumpTimer=null;
 function taskAdd(t){ frontierTasks.push(t); mergeFrontier(); }
 function mergeFrontier(){                    // 只有首尾相接、连续完成的部分才算「已识别覆盖」，乱序返回要等前面补齐
   frontierTasks.sort((a,b)=>a.start-b.start);
@@ -683,7 +680,25 @@ function mergeFrontier(){                    // 只有首尾相接、连续完�
       if(t.end<=doneFrontier){ frontierTasks.splice(i,1); go=true; break; }
       if(t.start<=doneFrontier && t.end>doneFrontier){ doneFrontier=t.end; frontierTasks.splice(i,1); go=true; break; } } }
 }
-function pump(){ while(inFlight<MAX_FLIGHT && waitQueue.length){ inFlight++; runASR(waitQueue.shift()); } }
+function pump(){
+  if(pumpTimer) return;
+  while(inFlight<flightCap && waitQueue.length){
+    const wait=asrGateUntil-Date.now();
+    if(wait>0){ pumpTimer=setTimeout(()=>{ pumpTimer=null; pump(); }, wait); return; }   // 每一次发出都要隔够间隔，并发也不例外
+    inFlight++; asrGateUntil=Date.now()+asrGapMs; runASR(waitQueue.shift());
+  }
+}
+function throttleHit(){                       // 被限流：降并发 + 拉大间隔，而不是把句子丢掉
+  throttleN++; okStreak=0; flightCap=1;
+  asrGapMs=Math.min(6000, Math.round(asrGapMs*1.8));
+  asrGateUntil=Date.now()+asrGapMs;
+  status('识别被限流（429），已自动放慢到每 '+(asrGapMs/1000).toFixed(1)+' 秒一段、单并发，正在重试，句子不会丢。','warn');
+}
+function throttleOk(){
+  okStreak++;
+  if(okStreak>=12 && flightCap<2) flightCap=2;
+  if(okStreak%6===0) asrGapMs=Math.max(1000, asrGapMs-200);
+}
 function sendTask(startRaw,endRaw,skipAsr){
   const t={ start:startRaw, end:endRaw, done:false, dur:(endRaw-startRaw)/sr,
             tStart:rec.startVideoTime + startRaw/sr, audio:null };
@@ -697,7 +712,20 @@ async function runASR(task){
   const myEpoch=asrEpoch;
   try{
     if(settings.asrMode==='cloud'){
-      const text=cleanText(await cloudTranscribe(task.audio));
+      let text='', attempt=0;
+      for(;;){
+        try{ text=cleanText(await cloudTranscribe(task.audio)); throttleOk(); break; }
+        catch(err){
+          const m=String((err&&err.message)||err);
+          if(myEpoch===asrEpoch && attempt<3 && /429|rate ?limit|限流|throttl/i.test(m)){
+            attempt++; throttleHit();
+            await new Promise(r=>setTimeout(r, 1200*attempt));   // 1.2s → 2.4s → 3.6s 退避后重发同一段
+            if(myEpoch!==asrEpoch) break;
+            continue;
+          }
+          throw err;
+        }
+      }
       sentCount++; lastText=text?('「'+text.slice(0,40)+'」'):'(无有效语音，已过滤)';
       if(myEpoch===asrEpoch && text) handleTranscript({text}, task);
       status('云端识别中（静音切句，上限 '+settings.chunk+'s/段）…','ok');
@@ -710,7 +738,12 @@ async function runASR(task){
       if(myEpoch===asrEpoch) handleTranscript(out, task);
       status('本地识别中（静音切句，上限 '+settings.chunk+'s/段）…','ok');
     }
-  }catch(err){ status('识别出错：'+((err&&err.message)||err),'err'); }
+  }catch(err){
+    const m=String((err&&err.message)||err);
+    if(/429|rate ?limit|限流|throttl/i.test(m))
+      status('识别仍被限流（已退避重试 4 次），这一段先跳过，后面继续。免费额度 QPS 很低：可在百炼控制台提升限流，或把「分段上限」调大少发请求。','warn');
+    else status('识别出错：'+m,'err');
+  }
   task.done=true; inFlight=Math.max(0,inFlight-1); mergeFrontier();   // 出错也算覆盖过，否则前沿卡死
   if(myEpoch===asrEpoch) pump(); else { waitQueue.length=0; }
 }
@@ -930,7 +963,7 @@ function hideBanner(){ $('banner').style.display='none'; bannerShown=false; }
 function tick(){
   if(!rec.active) return;
   const upto=Math.floor(totalRaw - 0.1*sr);           // 只用攒稳的样本，别切到半个包
-  const chunkRaw=settings.chunk*sr, minRaw=1.1*sr, silenceCut=0.42*sr;
+  const chunkRaw=settings.chunk*sr, minRaw=2.6*sr, silenceCut=0.42*sr;   // 最短 2.6 秒一段：太碎会被百炼限流
   while(upto-rec.processedRaw > 0.2*sr){
     const segStart=rec.processedRaw, span=upto-segStart;
     const scan=scanVoiced(segStart,upto), hasVoice=scan.last>segStart;
@@ -957,6 +990,7 @@ function tick(){
       +' | 采集:'+capPath+(ctx&&ctx.state!=='running'?'(音频'+ctx.state+')':'')
       +' | 识别段:'+sentCount+' 出句:'+gotCount+' | 段均:'+segAvg.toFixed(1)+'s'
       +(rec.active?' | 字幕滞后:'+Math.max(0,followLag).toFixed(1)+'s 在途:'+inFlight:'')
+      +(rec.active&&(flightCap<2||asrGapMs>1000)?' | 限速:'+(asrGapMs/1000).toFixed(1)+'s/并发'+flightCap:'')
       +(lastText?' | 最近:「'+lastText+'」':'')+(trStr()?' | 译:'+trStr():'')+(trLastErr?' | 译误:'+trLastErr.slice(0,60):'');
     // 兜底告警：有信号却一直没送出识别段，必须让用户看见原因，不能再静悄悄
     if(!noSegWarned && rec.active && recSince && Date.now()-recSince>20000 && sentCount===0 && peakHold>DEAD_ABS*3){
