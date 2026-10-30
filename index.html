@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>观影字幕助手</h1>
-  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.7 识别自动限速</b></div>
+  <div class="sub">在线视频直链播放 → 云端语音识别 → 自动翻译 → 双语字幕 · 手机浏览器直接用 · <b id="verTag">v6.4.8 翻译失败原因可见</b></div>
 
   <!-- 播放器 -->
   <div class="card">
@@ -880,7 +880,8 @@ async function translateCustom(texts){
 }
 let trTimer=null;
 const trStat={}; // 引擎诊断计数 {ok:N, fail:N}
-function trStr(){ const parts=[]; for(const e in trStat){ const s=trStat[e]; if(s.ok||s.fail) parts.push(e+'✓'+s.ok+'/✗'+s.fail); } return parts.join(' '); }
+function trStr(){ const parts=[]; for(const e in trStat){ const s=trStat[e];
+  if(s.ok||s.fail) parts.push(e+'✓'+s.ok+'/✗'+s.fail+(s.fail&&s.why?'('+s.why+')':'')); } return parts.join(' '); }
 function flushTranslate(){
   if(!pending.length) return;
   const batch=pending.splice(0,6);
@@ -904,7 +905,8 @@ function flushTranslate(){
               : e==='custom'  ? await translateCustom(needTexts)
               :                 await translateMyMemory(needTexts, sl);
           usedEng=e; trStat[e]=trStat[e]||{ok:0,fail:0}; trStat[e].ok++; break;
-        }catch(err){ lastErr=err; trStat[e]=trStat[e]||{ok:0,fail:0}; trStat[e].fail++; }
+        }catch(err){ lastErr=err; trStat[e]=trStat[e]||{ok:0,fail:0}; trStat[e].fail++;
+          trStat[e].why=String((err&&err.message)||err).replace(/\s+/g,' ').slice(0,46); }   // 降级成功也要留下首选引擎的失败原因，否则永远查不出为什么
       }
       if(res){
         needIdx.forEach((idx,k)=>{ const v=(res[k]||'').trim(); cands[idx]=v||texts[idx]; cacheSet(keys[idx],cands[idx]); });
