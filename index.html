@@ -29,6 +29,7 @@
   input[type=text],input[type=password],select,textarea{
     background:var(--card2); color:var(--txt); border:1px solid var(--line);
     border-radius:8px; padding:9px 10px; font-size:14px; outline:none; min-width:0;}
+  textarea{width:100%; min-height:84px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.5; word-break:break-all}
   input[type=text]:focus,select:focus{border-color:var(--acc)}
   select{max-width:100%}
   button{background:var(--card2); color:var(--txt); border:1px solid var(--line);
@@ -126,7 +127,7 @@
 <body>
 <div class="wrap">
   <div class="mainHead">
-    <h1>观影字幕助手</h1><b id="verTag">v6.6.0 单键控制</b>
+    <h1>观影字幕助手</h1><b id="verTag">v6.7.0 站内字幕</b>
   </div>
 
   <div class="row">
@@ -320,7 +321,7 @@
 
   <!-- 工具箱 -->
   <div class="card">
-    <h2>工具箱 · 书签脚本（一键提取影视页视频直链）</h2>
+    <h2>工具箱 · 方式一：提取视频直链</h2>
     <p class="hint" style="margin-top:0">在影视网站播放页运行下面的书签脚本，会自动找出视频直链并复制，然后粘贴到本页顶部输入框。</p>
     <details open>
       <summary><b>iPhone Safari 安装步骤</b></summary>
@@ -344,6 +345,36 @@
     <div class="row">
       <button id="btnCopyBm" class="primary grow">复制脚本</button>
     </div>
+  </div>
+
+  <!-- 工具箱 · 方式二：站内注入 -->
+  <div class="card">
+    <h2>工具箱 · 方式二：在视频站页面里直接出字幕</h2>
+    <p class="hint" style="margin-top:0">不用找直链。在影视网站自己的播放页运行下面的脚本，字幕直接画在它的播放器上——脚本和播放器同源，所以能抓到声音，绕开了「跨域不让嵌、不让抓声」那堵墙。Key 还是你这把百炼 Key，每个站点各填一次，只存在该站本地。</p>
+    <details open>
+      <summary><b>iPhone Safari 安装步骤（书签）</b></summary>
+      <ol class="faq">
+        <li>点下面「复制站内字幕脚本」。</li>
+        <li>Safari 随便打开一个网页 → 分享 → 「添加书签」，名称填「站内字幕」。</li>
+        <li>书签 → 编辑 → 找到「站内字幕」，把<b>网址</b>整段删掉，粘贴脚本，保存。</li>
+        <li>去影视网站播放页，<b>先点播放</b>，再从书签里点「站内字幕」→ 画面右下角出现蓝色「字幕」按钮 → 填 Key → 点「开始」。</li>
+      </ol>
+    </details>
+    <details>
+      <summary><b>电脑 / 安卓：装油猴脚本（站点禁外部脚本时也能用）</b></summary>
+      <ol class="faq">
+        <li>先装 Tampermonkey（油猴）扩展。</li>
+        <li>点 <a href="https://make3548-beep.github.io/movie-subtitle-helper/msh-inject.user.js">安装站内字幕油猴脚本</a>，在弹出页点「安装」。</li>
+        <li>之后打开带播放器的页面，右下角自动出现「字幕」按钮；没有播放器的页面不打扰。不想要就在面板里点「移除本站字幕组件」。</li>
+      </ol>
+    </details>
+    <div style="height:8px"></div>
+    <textarea id="bmInject" readonly></textarea>
+    <div style="height:8px"></div>
+    <div class="row">
+      <button id="btnCopyInject" class="primary grow">复制站内字幕脚本</button>
+    </div>
+    <p class="hint">书签方式每次取最新版；油猴是整包安装，更新要重新点一次安装链接。站点若禁止外部脚本（CSP），书签会弹提示，改用油猴即可。播放器是跨域媒体时抓不到内部声音，会自动改麦克风拾音（要外放出声）。iPhone 请用播放器自带的网页全屏，系统原生全屏盖不住字幕。</p>
   </div>
 
   <!-- 说明与限制 -->
@@ -1301,14 +1332,20 @@ $('srtFile').onchange=async e=>{
 /* ============ 书签脚本 ============ */
 const bookmarklet = "javascript:(function(){var s=new Set(),push=function(u){if(u&&/^https?:|\\/\\//.test(u)){u=u.replace(/^\\/\\//,location.protocol+'//');if(/\\.(m3u8|mp4)(\\?|#|$)/i.test(u)||/m3u8/i.test(u))s.add(u);}};document.querySelectorAll('video,source,audio').forEach(function(e){push(e.src||e.currentSrc)});try{performance.getEntriesByType('resource').forEach(function(e){push(e.name)})}catch(e){};var html;try{html=document.documentElement.innerHTML}catch(e){}if(html){var m=html.match(/https?:\\/\\/[^\"'\\\\\\s<>]+?\\.(m3u8|mp4)[^\"'\\\\\\s<>]*/gi);if(m)m.forEach(push)}var out=[...s];if(!out.length){alert('未找到视频直链：请先点击播放再运行本脚本；若播放器在跨域 iframe 内则无法提取');return}var best=out.find(function(u){return /\\.m3u8/i.test(u)})||out[0];var list='已复制直链：\\n'+best+'\\n\\n共 '+out.length+' 条候选：\\n'+out.slice(0,10).join('\\n');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(best).then(function(){alert(list)},function(){prompt('视频直链（手动复制）：',best)})}else{prompt('视频直链（手动复制）：',best)}})();";
 $('bmText').value=bookmarklet;
-$('btnCopyBm').onclick=()=>{
-  const done=()=>toast('脚本已复制，去浏览器书签里粘贴到「网址」栏');
-  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(bookmarklet).then(done,()=>fallbackCopy());
-  else fallbackCopy();
-  function fallbackCopy(){ const ta=$('bmText'); ta.removeAttribute('readonly'); ta.select();
+function copyBm(text,taId,okMsg){
+  const done=()=>toast(okMsg);
+  const fallback=()=>{ const ta=$(taId); ta.removeAttribute('readonly'); ta.select();
     try{ document.execCommand('copy'); done(); }catch(e){ toast('请手动全选复制'); }
-    ta.setAttribute('readonly',''); }
-};
+    ta.setAttribute('readonly',''); };
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done,fallback);
+  else fallback();
+}
+$('btnCopyBm').onclick=()=>copyBm(bookmarklet,'bmText','脚本已复制，去浏览器书签里粘贴到「网址」栏');
+
+/* 方式二：站内注入版——脚本跑在站点自己的页面里，同源所以能抓声音 */
+const injectBm="javascript:(function(){window.__mshForce=1;var s=document.createElement('script');s.src='https://make3548-beep.github.io/movie-subtitle-helper/msh-inject.js?t='+Date.now();s.onerror=function(){alert('该站禁止加载外部脚本（CSP），请改用油猴脚本安装：https://make3548-beep.github.io/movie-subtitle-helper/msh-inject.user.js');};document.body.appendChild(s);})();";
+$('bmInject').value=injectBm;
+$('btnCopyInject').onclick=()=>copyBm(injectBm,'bmInject','站内字幕脚本已复制，去书签里粘贴到「网址」栏');
 
 /* 恢复上次直链 */
 if(localStorage.getItem('msh_lasturl')){ $('urlInput').value=localStorage.getItem('msh_lasturl'); }
