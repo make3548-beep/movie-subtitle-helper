@@ -18,7 +18,7 @@ else {
 }
 
 function boot() {
-const VER = '1.2.0';
+const VER = '1.2.1';
 const BL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 const S = { key: '', mode: 'both', mic: false };
 try { Object.assign(S, JSON.parse(localStorage.getItem('msh_inject_cfg') || '{}')); } catch (e) {}
@@ -78,7 +78,7 @@ const micBtn = el('button', BTN + 'flex:0 0 auto;', row1);
 const runBtn = el('button', BTN + 'width:100%;margin-top:8px;background:#4f8cff;border-color:#4f8cff;color:#fff;font-weight:600;', panel, '开始');
 const statusEl = el('div', 'font-size:12px;color:#8b93a3;margin-top:8px;word-break:break-all;min-height:16px;', panel);
 const hintEl = el('div', 'font-size:11px;color:#8b93a3;margin-top:6px;line-height:1.5;', panel,
-  '先在站内点播放，再点「开始」。字幕画在播放器画面内下方，网页全屏也跟着走；iPhone 的系统原生全屏盖不住字幕，请用播放器自带的网页全屏。个别站禁止外部脚本时改用油猴脚本安装。');
+  '先在站内点播放，再点「开始」。字幕画在画面内下方，想横屏就直接把手机转过来（别点播放器的全屏按钮：那会进系统播放器，字幕和「字幕」按钮会一起消失）。个别站禁止外部脚本时改用油猴脚本安装。');
 const btnDestroy = el('button', BTN + 'margin-top:8px;padding:4px 8px;font-size:12px;background:transparent;color:#8b93a3;', panel, '移除本站字幕组件');
 
 const overlay = el('div', 'position:fixed;z-index:' + (Z - 1) + ';pointer-events:none;display:none;text-align:center;overflow:hidden;');
@@ -98,7 +98,12 @@ function syncMicBtn() {
   micBtn.style.borderColor = on ? '#4f8cff' : '#262a33';
   micBtn.style.color = on ? '#fff' : '#8b93a3';
 }
-function uiHost() { return document.fullscreenElement || document.webkitFullscreenElement || document.body; }
+function isMediaEl(e) { return !!e && /^(VIDEO|AUDIO)$/.test(e.tagName); }
+function uiHost() {
+  const h = document.fullscreenElement || document.webkitFullscreenElement;
+  // 系统全屏会把 video 自己当全屏元素，而 video 是替换元素：塞进去的节点实测尺寸恒为 0×0，还可能被播放器 teardown 丢掉
+  return isMediaEl(h) ? document.body : (h || document.body);
+}
 function reparentUI() {
   const h = uiHost();
   if (overlay.parentNode !== h) h.appendChild(overlay);
@@ -120,7 +125,11 @@ function placeOverlay() {
   zEl.style.left = '6%'; zEl.style.right = '6%'; zEl.style.bottom = gap + 'px';
   oEl.style.left = '6%'; oEl.style.right = '6%'; oEl.style.bottom = (gap + fs * 1.35 + 3) + 'px';
 }
-const onFsChange = () => reparentUI();
+const sysFsWarn = () => setStatus('刚才是系统全屏（画面交给了系统播放器），网页字幕盖不上去。想横屏看字幕：直接把手机横过来、别点播放器的全屏按钮，字幕会跟着画面走。', 'warn');
+const onFsChange = () => {
+  reparentUI();
+  if (isMediaEl(document.fullscreenElement || document.webkitFullscreenElement)) sysFsWarn();
+};
 document.addEventListener('fullscreenchange', onFsChange);
 document.addEventListener('webkitfullscreenchange', onFsChange);
 chip.onclick = () => { panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; };
@@ -487,13 +496,16 @@ const onPlay = () => {
   }
 };
 const onGeom = () => placeOverlay();
+const onSysFsEnd = () => { placeOverlay(); sysFsWarn(); };   // iOS 原生全屏不一定派发 document 的 fullscreenchange，只有这两个事件可靠
 function bindVideoEvents() {
   video.addEventListener('seeked', onSeeked); video.addEventListener('pause', onPause); video.addEventListener('play', onPlay);
+  video.addEventListener('webkitendfullscreen', onSysFsEnd);
   window.addEventListener('resize', onGeom); window.addEventListener('scroll', onGeom, true);
   document.addEventListener('fullscreenchange', onGeom);
 }
 function unbindVideoEvents() {
-  if (video) { video.removeEventListener('seeked', onSeeked); video.removeEventListener('pause', onPause); video.removeEventListener('play', onPlay); }
+  if (video) { video.removeEventListener('seeked', onSeeked); video.removeEventListener('pause', onPause); video.removeEventListener('play', onPlay);
+    video.removeEventListener('webkitendfullscreen', onSysFsEnd); }
   window.removeEventListener('resize', onGeom); window.removeEventListener('scroll', onGeom, true);
   document.removeEventListener('fullscreenchange', onGeom);
 }
