@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         观影字幕助手 · 站内版
 // @namespace    https://make3548-beep.github.io/movie-subtitle-helper/
-// @version      1.0.0
+// @version      1.1.0
 // @description  在视频网站自己的播放页里直接出双语字幕：脚本与播放器同源所以能抓到声音，字幕画在播放器画面内下方。需自备阿里云百炼 API Key（只存在该站本地）。
 // @author       movie-subtitle-helper
 // @match        *://*/*
@@ -16,7 +16,10 @@
    字幕直接画在站点播放器上，不用粘直链。切句/并发/覆盖前沿/翻译与主工具同一套判据。 */
 (() => {
 'use strict';
-if (window.__mshInject) { window.__mshInject.toggle(); return; }
+/* 书签可以把主工具里配好的 Key 直接带过来：只存在本机书签里，不进任何 URL */
+const carriedKey = window.__mshKey ? String(window.__mshKey).trim() : '';
+if (carriedKey) { try { delete window.__mshKey; } catch (e) { window.__mshKey = ''; } }
+if (window.__mshInject) { if (carriedKey) window.__mshInject.setKey(carriedKey); window.__mshInject.toggle(); return; }
 
 /* 书签是用户主动点的，直接挂载；油猴脚本每个页面都会跑，没播放器就不打扰，等播放器出现再挂载 */
 const hasVideo = () => !!document.querySelector('video');
@@ -28,11 +31,12 @@ else {
 }
 
 function boot() {
-const VER = '1.0.0';
+const VER = '1.1.0';
 const BL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 const S = { key: '', mode: 'both', mic: false };
 try { Object.assign(S, JSON.parse(localStorage.getItem('msh_inject_cfg') || '{}')); } catch (e) {}
 const saveCfg = () => { try { localStorage.setItem('msh_inject_cfg', JSON.stringify(S)); } catch (e) {} };
+if (carriedKey) { S.key = carriedKey; saveCfg(); }
 
 let video = null, boundVideo = null;
 let ctx = null, srcNode = null, analyser = null, srcAnalyser = null, srcTap = null, srcLevelBuf = null;
@@ -590,6 +594,7 @@ _d.feed = onAudioData; _d.tick = tick; _d.flushTranslate = flushTranslate; _d.pl
 window.__mshInject = {
   version: VER,
   toggle: () => { panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; },
+  setKey: k => { S.key = String(k || '').trim(); saveCfg(); keyInput.value = S.key; },
   start, stop,
   destroy: () => btnDestroy.onclick(),
   _d

@@ -127,7 +127,7 @@
 <body>
 <div class="wrap">
   <div class="mainHead">
-    <h1>观影字幕助手</h1><b id="verTag">v6.7.0 站内字幕</b>
+    <h1>观影字幕助手</h1><b id="verTag">v6.7.1 免填Key</b>
   </div>
 
   <div class="row">
@@ -350,14 +350,14 @@
   <!-- 工具箱 · 方式二：站内注入 -->
   <div class="card">
     <h2>工具箱 · 方式二：在视频站页面里直接出字幕</h2>
-    <p class="hint" style="margin-top:0">不用找直链。在影视网站自己的播放页运行下面的脚本，字幕直接画在它的播放器上——脚本和播放器同源，所以能抓到声音，绕开了「跨域不让嵌、不让抓声」那堵墙。Key 还是你这把百炼 Key，每个站点各填一次，只存在该站本地。</p>
+    <p class="hint" style="margin-top:0">不用找直链，也不用再填 Key。在影视网站自己的播放页运行下面的脚本，字幕直接画在它的播放器上——脚本和播放器同源，所以能抓到声音，绕开了「跨域不让嵌、不让抓声」那堵墙。你在「语音识别」里配好的 Key 会自动烧进这段书签（浏览器不允许跨站读存储，所以只能这样带过去）。</p>
     <details open>
       <summary><b>iPhone Safari 安装步骤（书签）</b></summary>
       <ol class="faq">
         <li>点下面「复制站内字幕脚本」。</li>
         <li>Safari 随便打开一个网页 → 分享 → 「添加书签」，名称填「站内字幕」。</li>
         <li>书签 → 编辑 → 找到「站内字幕」，把<b>网址</b>整段删掉，粘贴脚本，保存。</li>
-        <li>去影视网站播放页，<b>先点播放</b>，再从书签里点「站内字幕」→ 画面右下角出现蓝色「字幕」按钮 → 填 Key → 点「开始」。</li>
+        <li>去影视网站播放页，<b>先点播放</b>，再从书签里点「站内字幕」→ 画面右下角出现蓝色「字幕」按钮 → 点「开始」（Key 已带上，不用再填）。</li>
       </ol>
     </details>
     <details>
@@ -374,7 +374,8 @@
     <div class="row">
       <button id="btnCopyInject" class="primary grow">复制站内字幕脚本</button>
     </div>
-    <p class="hint">书签方式每次取最新版；油猴是整包安装，更新要重新点一次安装链接。站点若禁止外部脚本（CSP），书签会弹提示，改用油猴即可。播放器是跨域媒体时抓不到内部声音，会自动改麦克风拾音（要外放出声）。iPhone 请用播放器自带的网页全屏，系统原生全屏盖不住字幕。</p>
+    <p class="hint" id="injectKeyHint"></p>
+    <p class="hint">书签方式每次取最新版引擎；油猴是整包安装，更新要重新点一次安装链接，且 Key 要在每个站点各填一次（油猴脚本拿不到本页的 Key）。站点若禁止外部脚本（CSP），书签会弹提示，改用油猴即可。播放器是跨域媒体时抓不到内部声音，会自动改麦克风拾音（要外放出声）。iPhone 请用播放器自带的网页全屏，系统原生全屏盖不住字幕。</p>
   </div>
 
   <!-- 说明与限制 -->
@@ -466,7 +467,8 @@ $('asrKey').onchange=e=>{ let k=e.target.value.trim();
   else if(k.length<30) warn='Key 长度只有 '+k.length+' 位，太短——复制不全，请用控制台 Key 旁的「复制」按钮';
   else if(/x{4,}/i.test(k)) warn='Key 含连续 x，像文档示例占位符，不是真 Key';
   if(warn) toast('⚠️ '+warn);
-  else toast('Key 已保存：'+k.slice(0,5)+'…'+k.slice(-4)+'（长度'+k.length+'，格式正常）'); };
+  else toast('Key 已保存：'+k.slice(0,5)+'…'+k.slice(-4)+'（长度'+k.length+'，格式正常）');
+  refreshInjectBm(); };
 $('asrModel').onchange=e=>{ settings.asrModel=e.target.value.trim()||BL_MODEL; saveSettings(); };
 
 /* ============ 打开视频（m3u8 / mp4） ============ */
@@ -1342,10 +1344,23 @@ function copyBm(text,taId,okMsg){
 }
 $('btnCopyBm').onclick=()=>copyBm(bookmarklet,'bmText','脚本已复制，去浏览器书签里粘贴到「网址」栏');
 
-/* 方式二：站内注入版——脚本跑在站点自己的页面里，同源所以能抓声音 */
-const injectBm="javascript:(function(){window.__mshForce=1;var s=document.createElement('script');s.src='https://make3548-beep.github.io/movie-subtitle-helper/msh-inject.js?t='+Date.now();s.onerror=function(){alert('该站禁止加载外部脚本（CSP），请改用油猴脚本安装：https://make3548-beep.github.io/movie-subtitle-helper/msh-inject.user.js');};document.body.appendChild(s);})();";
-$('bmInject').value=injectBm;
-$('btnCopyInject').onclick=()=>copyBm(injectBm,'bmInject','站内字幕脚本已复制，去书签里粘贴到「网址」栏');
+/* 方式二：站内注入版——脚本跑在站点自己的页面里，同源所以能抓声音。
+   浏览器不允许 A 站读 B 站的 localStorage，所以把这里配好的 Key 直接烧进书签代码（只在本机书签里，不进任何 URL） */
+const INJECT_URL='https://make3548-beep.github.io/movie-subtitle-helper/msh-inject.js';
+const USERJS_URL='https://make3548-beep.github.io/movie-subtitle-helper/msh-inject.user.js';
+function buildInjectBm(){
+  const k=(settings.asrKey||'').trim();
+  const carry=k?'window.__mshKey='+JSON.stringify(k)+';':'';
+  return "javascript:(function(){"+carry+"window.__mshForce=1;var s=document.createElement('script');s.src='"+INJECT_URL+"?t='+Date.now();s.onerror=function(){alert('该站禁止加载外部脚本（CSP），请改用油猴脚本安装："+USERJS_URL+"');};document.body.appendChild(s);})();";
+}
+function refreshInjectBm(){
+  $('bmInject').value=buildInjectBm();
+  $('injectKeyHint').textContent=(settings.asrKey||'').trim()
+    ? '已带上你在「语音识别」里配好的 Key：这段书签复制到浏览器后，任何站点都不用再填 Key，点「开始」就出字幕。注意这段代码里含你的 Key，别发给别人；换了 Key 回来重新复制一次。'
+    : '还没配 Key：先去上面「语音识别」填好百炼 Key，这里会自动带上，之后所有站点都不用再填。';
+}
+refreshInjectBm();
+$('btnCopyInject').onclick=()=>copyBm($('bmInject').value,'bmInject','站内字幕脚本已复制，去书签里粘贴到「网址」栏');
 
 /* 恢复上次直链 */
 if(localStorage.getItem('msh_lasturl')){ $('urlInput').value=localStorage.getItem('msh_lasturl'); }
