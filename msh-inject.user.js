@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         观影字幕助手 · 站内版
 // @namespace    https://make3548-beep.github.io/movie-subtitle-helper/
-// @version      1.1.0
+// @version      1.2.0
 // @description  在视频网站自己的播放页里直接出双语字幕：脚本与播放器同源所以能抓到声音，字幕画在播放器画面内下方。需自备阿里云百炼 API Key（只存在该站本地）。
 // @author       movie-subtitle-helper
 // @match        *://*/*
@@ -31,7 +31,7 @@ else {
 }
 
 function boot() {
-const VER = '1.1.0';
+const VER = '1.2.0';
 const BL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 const S = { key: '', mode: 'both', mic: false };
 try { Object.assign(S, JSON.parse(localStorage.getItem('msh_inject_cfg') || '{}')); } catch (e) {}
@@ -273,7 +273,7 @@ function voicedSpan(a, b) {
 function tick() {
   if (!rec.active || !video) return;
   const upto = Math.floor(totalRaw - 0.1 * sr);
-  const chunkRaw = 10 * sr, minRaw = 2.6 * sr, silenceCut = 0.42 * sr;
+  const chunkRaw = 5 * sr, minRaw = 2.6 * sr, silenceCut = 0.42 * sr;   // 上限 5s：连续对白时更跟手（用户实测），有静音照样提前切句
   while (upto - rec.processedRaw > 0.2 * sr) {
     const segStart = rec.processedRaw, span = upto - segStart;
     const scan = scanVoiced(segStart, upto), hasVoice = scan.last > segStart;
@@ -403,7 +403,7 @@ async function runASR(task) {
     }
     sentCount++; lastText = text ? '「' + text.slice(0, 40) + '」' : '(无有效语音)';
     if (myEpoch === asrEpoch && text) handleTranscript({ text }, task);
-    setStatus('识别运行中（静音切句，上限 10s/段）… 出句 ' + gotCount, 'ok');
+    setStatus('识别运行中（静音切句，上限 5s/段）… 出句 ' + gotCount, 'ok');
   } catch (err) {
     setStatus('识别出错：' + ((err && err.message) || err), 'err');
   }
@@ -531,7 +531,7 @@ async function start() {
     placeOverlay();
     runBtn.textContent = '停止';
     runBtn.style.background = 'transparent'; runBtn.style.borderColor = '#ff6b6b'; runBtn.style.color = '#ff6b6b';
-    setStatus(video.paused ? '已就绪：播放器还是暂停的，点播放就开始出字幕。' : '识别运行中（静音切句，上限 10s/段）…', video.paused ? 'warn' : 'ok');
+    setStatus(video.paused ? '已就绪：播放器还是暂停的，点播放就开始出字幕。' : '识别运行中（静音切句，上限 5s/段）…', video.paused ? 'warn' : 'ok');
   } catch (e) {
     setStatus('启动失败：' + ((e && e.message) || e), 'err');
   }
