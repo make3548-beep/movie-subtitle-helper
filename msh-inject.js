@@ -18,9 +18,9 @@ else {
 }
 
 function boot() {
-const VER = '1.2.1';
+const VER = '1.3.0';
 const BL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
-const S = { key: '', mode: 'both', mic: false };
+const S = { key: '', mode: 'both', mic: false, hook: true };
 try { Object.assign(S, JSON.parse(localStorage.getItem('msh_inject_cfg') || '{}')); } catch (e) {}
 const saveCfg = () => { try { localStorage.setItem('msh_inject_cfg', JSON.stringify(S)); } catch (e) {} };
 if (carriedKey) { S.key = carriedKey; saveCfg(); }
@@ -54,8 +54,10 @@ const BTN = 'font-family:' + FONT + ';font-size:13px;line-height:1.4;padding:8px
 const chip = el('button', 'position:fixed;right:12px;bottom:12px;z-index:' + Z + ';' + BTN +
   'background:#4f8cff;border-color:#4f8cff;color:#fff;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.45);', null, '字幕');
 const panel = el('div', 'position:fixed;right:12px;bottom:58px;z-index:' + Z + ';width:min(320px,calc(100vw - 24px));' +
+  'max-height:calc(100vh - 90px);overflow-y:auto;overscroll-behavior:contain;' +
   'background:#14161b;border:1px solid #262a33;border-radius:12px;padding:12px;box-shadow:0 8px 32px rgba(0,0,0,.6);' +
   'font-family:' + FONT + ';color:#eef0f4;display:none;');
+panel.className = 'mshScroll';
 const head = el('div', 'display:flex;align-items:center;gap:8px;margin-bottom:8px;', panel);
 el('b', 'font-size:14px;font-weight:600;', head, '站内字幕');
 el('span', 'font-size:11px;color:#8b93a3;', head, 'v' + VER);
@@ -76,20 +78,275 @@ modeSel.value = S.mode;
 modeSel.onchange = () => { S.mode = modeSel.value; saveCfg(); };
 const micBtn = el('button', BTN + 'flex:0 0 auto;', row1);
 const runBtn = el('button', BTN + 'width:100%;margin-top:8px;background:#4f8cff;border-color:#4f8cff;color:#fff;font-weight:600;', panel, '开始');
+const row2 = el('div', 'display:flex;gap:8px;margin-top:8px;', panel);
+const fsBtn2 = el('button', BTN + 'flex:1;font-size:12px;', row2, '网页全屏');
+const hookBtn = el('button', BTN + 'flex:1;font-size:12px;', row2);
 const statusEl = el('div', 'font-size:12px;color:#8b93a3;margin-top:8px;word-break:break-all;min-height:16px;', panel);
 const hintEl = el('div', 'font-size:11px;color:#8b93a3;margin-top:6px;line-height:1.5;', panel,
-  '先在站内点播放，再点「开始」。字幕画在画面内下方，想横屏就直接把手机转过来（别点播放器的全屏按钮：那会进系统播放器，字幕和「字幕」按钮会一起消失）。个别站禁止外部脚本时改用油猴脚本安装。');
+  '先在站内点播放，再点「开始」。横屏看片照常点播放器的全屏按钮：脚本会把它接到自己的网页全屏层，再把手机横过来，字幕跟着画面走，底部有播放/进度/字号/字幕开关。个别站禁止外部脚本时改用油猴脚本安装。');
 const btnDestroy = el('button', BTN + 'margin-top:8px;padding:4px 8px;font-size:12px;background:transparent;color:#8b93a3;', panel, '移除本站字幕组件');
 
 const overlay = el('div', 'position:fixed;z-index:' + (Z - 1) + ';pointer-events:none;display:none;text-align:center;overflow:hidden;');
-const oEl = el('div', 'color:#fff;font-weight:500;line-height:1.35;margin-bottom:3px;display:none;text-shadow:' +
+const oEl = el('div', 'color:#fff;font-weight:500;line-height:1.35;margin-bottom:3px;display:none;transition:bottom .18s ease;text-shadow:' +
   '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,-1px 0 0 #000,1px 0 0 #000,0 -1px 0 #000,0 1px 0 #000,0 2px 6px rgba(0,0,0,.85);', overlay);
-const zEl = el('div', 'color:#fff;font-weight:700;line-height:1.35;display:none;text-shadow:' +
+const zEl = el('div', 'color:#fff;font-weight:700;line-height:1.35;display:none;transition:bottom .18s ease;text-shadow:' +
   '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,-1px 0 0 #000,1px 0 0 #000,0 -1px 0 #000,0 1px 0 #000,0 2px 6px rgba(0,0,0,.85);', overlay);
+
+/* ============ 自己的网页全屏：接管站点的全屏按钮，画面留在网页里，字幕才盖得上 ============ */
+let webfs = false, fsReal = false, fsScale = 1, fsSubOn = true, fsBarTimer = null, fsUiTimer = null, fsBarShown = true;
+let fsHome = null, fsNext = null, fsStyle = null, fsControls = false, fsOverflow = '', fsInternal = false;
+const fsHooks = [];
+const fsStyleEl = el('style', '');
+fsStyleEl.textContent = '.mshRange{-webkit-appearance:none;appearance:none;height:4px;border-radius:3px;background:#2a3346;outline:none}' +
+  '.mshRange::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:#4f8cff;border:2px solid #0b0f18;box-shadow:0 0 8px rgba(79,140,255,.85);cursor:pointer}' +
+  '.mshRange::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:#4f8cff;border:2px solid #0b0f18;cursor:pointer}' +
+  '.mshFsBtn:active{transform:scale(.94);background:rgba(79,140,255,.32)}' +
+  '.mshScroll{scrollbar-width:thin;scrollbar-color:#4f8cff #14161b}' +
+  '.mshScroll::-webkit-scrollbar{width:8px}.mshScroll::-webkit-scrollbar-track{background:#14161b;border-radius:8px}' +
+  '.mshScroll::-webkit-scrollbar-thumb{background:#2b3548;border-radius:8px}.mshScroll::-webkit-scrollbar-thumb:hover{background:#4f8cff}';
+const fsBox = el('div', 'position:fixed;inset:0;height:100dvh;z-index:' + (Z - 2) + ';display:none;align-items:center;justify-content:center;' +
+  'background:radial-gradient(120% 120% at 50% 0%,#0d1424 0%,#05070c 60%,#020306 100%);overflow:hidden;touch-action:manipulation;');
+const fsBar = el('div', 'position:absolute;left:0;right:0;bottom:0;z-index:5;padding:10px 12px calc(10px + env(safe-area-inset-bottom));' +
+  'display:flex;flex-direction:column;gap:8px;font-family:' + FONT + ';color:#eef0f4;' +
+  'background:linear-gradient(to top,rgba(3,5,10,.94),rgba(3,5,10,.72) 60%,transparent);' +
+  'transition:opacity .25s ease,transform .25s ease;', fsBox);
+const fsRow1 = el('div', 'display:flex;align-items:center;gap:10px;', fsBar);
+const fsSeek = el('input', 'flex:1;min-width:0;', fsRow1);
+fsSeek.type = 'range'; fsSeek.className = 'mshRange'; fsSeek.min = 0; fsSeek.max = 1000; fsSeek.value = 0;
+const fsTime = el('span', 'font-size:12px;color:#9fb0cc;font-variant-numeric:tabular-nums;white-space:nowrap;', fsRow1, '0:00 / 0:00');
+const fsRow2 = el('div', 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;', fsBar);
+const FSB = 'font-family:' + FONT + ';font-size:12px;line-height:1.4;padding:7px 10px;border-radius:9px;border:1px solid #2b3548;' +
+  'background:rgba(20,26,40,.9);color:#e8eefc;cursor:pointer;transition:background .15s,border-color .15s,transform .1s;';
+function fsb(parent, text, extra) { const b = el('button', FSB + (extra || ''), parent, text); b.className = 'mshFsBtn'; return b; }
+const fsPlay = fsb(fsRow2, '播放', 'min-width:64px;font-weight:600;');
+const fsRun = fsb(fsRow2, '识别：关');
+const fsMic = fsb(fsRow2, '麦克风：关');
+const fsMode = el('select', FSB + 'padding:7px 8px;', fsRow2);
+[['both', '双语'], ['zh', '仅中文'], ['orig', '仅原文']].forEach(([v, t]) => { const o = el('option', '', fsMode, t); o.value = v; });
+fsMode.value = S.mode;
+const fsSmaller = fsb(fsRow2, '字小');
+const fsBigger = fsb(fsRow2, '字大');
+const fsAuto = fsb(fsRow2, '自动字号');
+const fsSub = fsb(fsRow2, '字幕：开');
+const fsExit = fsb(fsRow2, '退出全屏', 'margin-left:auto;background:#4f8cff;border-color:#4f8cff;color:#fff;font-weight:600;');
+const fsTopExit = el('button', 'position:absolute;top:calc(10px + env(safe-area-inset-top));right:12px;z-index:6;' + FSB +
+  'background:rgba(8,11,18,.72);backdrop-filter:blur(6px);', fsBox, '退出全屏');
+fsTopExit.className = 'mshFsBtn';
+const fsToast = el('div', 'position:absolute;left:50%;top:calc(12px + env(safe-area-inset-top));transform:translateX(-50%);z-index:6;' +
+  'max-width:min(560px,86vw);padding:7px 12px;border-radius:10px;border:1px solid #2b3548;background:rgba(8,11,18,.82);' +
+  'backdrop-filter:blur(6px);font-family:' + FONT + ';font-size:12px;line-height:1.5;color:#cfe0ff;text-align:center;' +
+  'opacity:0;transition:opacity .3s ease;pointer-events:none;', fsBox);
+const fsChip = el('button', 'position:fixed;right:70px;bottom:12px;z-index:' + Z + ';' + BTN +
+  'background:rgba(20,26,40,.92);border-color:#4f8cff;color:#cfe0ff;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.45);', null, '全屏');
+let fsToastTimer = null;
+function toast(msg, kind) {
+  fsToast.textContent = msg;
+  fsToast.style.color = kind === 'err' ? '#ff9b9b' : kind === 'warn' ? '#ffd08a' : kind === 'ok' ? '#8ff0c4' : '#cfe0ff';
+  fsToast.style.opacity = '1';
+  clearTimeout(fsToastTimer);
+  fsToastTimer = setTimeout(() => { fsToast.style.opacity = '0'; }, 4200);
+}
+
+/* 原生全屏入口要在改写原型之前拿到，自己的全屏层用它，避免被自己的接管逻辑绕回来 */
+const NAT = {
+  req: Element.prototype.requestFullscreen || Element.prototype.webkitRequestFullscreen || Element.prototype.webkitRequestFullScreen,
+  exit: Document.prototype.exitFullscreen || Document.prototype.webkitExitFullscreen || Document.prototype.webkitCancelFullScreen
+};
+let fsInline = null, fsInlineWk = null, fsPanelWas = false, fsSelfExit = false, fsFitTimer = null, fsFitTimer2 = null;
+
+function fsClock(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+function fitFsVideo() {
+  if (!webfs || !video) return;
+  const w = fsBox.clientWidth || innerWidth, h = fsBox.clientHeight || innerHeight;
+  const ar = (video.videoWidth && video.videoHeight) ? video.videoWidth / video.videoHeight : 16 / 9;
+  let vw = w, vh = w / ar; if (vh > h) { vh = h; vw = h * ar; }
+  const st = video.style;   // 站点常用 !important 锁死播放器尺寸，这里必须同级压制
+  st.setProperty('width', Math.round(vw) + 'px', 'important');
+  st.setProperty('height', Math.round(vh) + 'px', 'important');
+  st.setProperty('max-width', 'none', 'important'); st.setProperty('max-height', 'none', 'important');
+  st.setProperty('object-fit', 'contain', 'important');
+  st.setProperty('margin', '0', 'important'); st.setProperty('position', 'relative', 'important');
+  st.setProperty('transform', 'none', 'important'); st.setProperty('flex', '0 0 auto', 'important');
+}
+function syncFsBar() {
+  if (!video) return;
+  fsPlay.textContent = video.paused ? '播放' : '暂停';
+  fsMode.value = S.mode;
+  fsSub.textContent = '字幕：' + (fsSubOn ? '开' : '关');
+  fsRun.textContent = '识别：' + (rec.active ? '开' : '关');
+  fsRun.style.borderColor = rec.active ? '#3ecf8e' : '#2b3548';
+  fsRun.style.color = rec.active ? '#8ff0c4' : '#e8eefc';
+  const mon = rec.active ? !!micNode : S.mic;
+  fsMic.textContent = '麦克风：' + (mon ? '开' : '关');
+  fsMic.style.borderColor = mon ? '#4f8cff' : '#2b3548';
+  fsMic.style.color = mon ? '#cfe0ff' : '#e8eefc';
+  const d = video.duration || 0;
+  if (document.activeElement !== fsSeek) fsSeek.value = d ? Math.round(video.currentTime / d * 1000) : 0;
+  fsTime.textContent = fsClock(video.currentTime) + ' / ' + fsClock(d);
+}
+function showFsBar() {
+  fsBarShown = true;
+  fsBar.style.opacity = '1'; fsBar.style.transform = 'translateY(0)'; fsBar.style.pointerEvents = 'auto';
+  placeOverlay();
+  clearTimeout(fsBarTimer);
+  fsBarTimer = setTimeout(() => {
+    if (webfs && video && !video.paused) {
+      fsBarShown = false;
+      fsBar.style.opacity = '0'; fsBar.style.transform = 'translateY(12px)'; fsBar.style.pointerEvents = 'none';
+      placeOverlay();
+    }
+  }, 3500);
+}
+function scheduleFit() {   // iOS 转屏时 innerWidth 会晚几拍才更新，补两次重量
+  clearTimeout(fsFitTimer); clearTimeout(fsFitTimer2);
+  fsFitTimer = setTimeout(() => { if (webfs) { fitFsVideo(); placeOverlay(); } }, 220);
+  fsFitTimer2 = setTimeout(() => { if (webfs) { fitFsVideo(); placeOverlay(); } }, 700);
+}
+function enterFs() {
+  if (webfs) return;
+  if (!video) video = pickVideo();
+  if (!video) { setStatus('没找到播放器：先在站内点播放，再点「全屏」。', 'err'); return; }
+  fsHome = video.parentNode; fsNext = video.nextSibling;
+  fsStyle = video.getAttribute('style'); fsControls = video.controls;
+  fsInline = video.getAttribute('playsinline'); fsInlineWk = video.getAttribute('webkit-playsinline');
+  fsPanelWas = panel.style.display !== 'none';
+  const wasPlaying = !video.paused;
+  fsOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden';
+  video.controls = false;
+  video.setAttribute('playsinline', ''); video.setAttribute('webkit-playsinline', '');   // 少了它 iPhone 一 play 就跳系统播放器
+  fsBox.style.display = 'flex'; fsBox.appendChild(video);
+  webfs = true; fsBarShown = true;
+  fsChip.style.display = 'none'; chip.style.display = 'none'; panel.style.display = 'none';
+  video.addEventListener('loadedmetadata', fitFsVideo);
+  fitFsVideo(); reparentUI(); syncFsBar(); showFsBar();
+  if (wasPlaying && video.paused) video.play().catch(() => {});
+  clearInterval(fsUiTimer);
+  fsUiTimer = setInterval(() => {
+    if (webfs && video && video.parentNode !== fsBox) { fsBox.appendChild(video); fitFsVideo(); }   // 站点脚本把播放器搬回去时抢回来
+    syncFsBar(); placeOverlay();
+  }, 500);
+  fsReal = false;
+  try {
+    const p = NAT.req && NAT.req.call(fsBox);
+    if (p && p.then) p.then(() => { fsReal = true; reparentUI(); placeOverlay(); }).catch(() => {});
+    else if ((document.fullscreenElement || document.webkitFullscreenElement) === fsBox) fsReal = true;
+  } catch (e) {}
+  try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) {}
+  scheduleFit();
+  toast('网页全屏：把手机横过来，字幕跟着画面走。', 'ok');
+  if (!rec.active && S.key) start();
+  else setStatus('已进网页全屏：字幕就在画面里，退出点右上「退出全屏」。', 'ok');
+}
+function exitFs() {
+  if (!webfs) return;
+  webfs = false; fsBarShown = false;
+  clearTimeout(fsBarTimer); clearTimeout(fsFitTimer); clearTimeout(fsFitTimer2);
+  clearInterval(fsUiTimer); fsUiTimer = null;
+  if (fsReal) { fsReal = false; try { const p = NAT.exit && NAT.exit.call(document); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+  try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+  if (video) {
+    video.removeEventListener('loadedmetadata', fitFsVideo);
+    if (fsHome && fsHome.isConnected) fsHome.insertBefore(video, fsNext && fsNext.parentNode === fsHome ? fsNext : null);
+    else document.body.appendChild(video);
+    if (fsStyle === null) video.removeAttribute('style'); else video.setAttribute('style', fsStyle);
+    video.controls = fsControls;
+    if (fsInline === null) video.removeAttribute('playsinline'); else video.setAttribute('playsinline', fsInline);
+    if (fsInlineWk === null) video.removeAttribute('webkit-playsinline'); else video.setAttribute('webkit-playsinline', fsInlineWk);
+    fsSelfExit = true;   // 通知站点播放器退出全屏状态，同时别让自家的系统全屏警告误报
+    try { video.dispatchEvent(new Event('webkitendfullscreen')); } catch (e) {}
+    fsSelfExit = false;
+  }
+  fsBox.style.display = 'none'; document.body.style.overflow = fsOverflow;
+  fsChip.style.display = ''; chip.style.display = ''; panel.style.display = fsPanelWas ? 'block' : 'none';
+  fsSubOn = true; overlay.style.visibility = 'visible'; fsToast.style.opacity = '0';
+  reparentUI(); placeOverlay(); syncFsBar();
+  setStatus('已退出网页全屏，回到站点页面。', 'ok');
+}
+fsChip.onclick = enterFs;
+fsBtn2.onclick = () => { panel.style.display = 'none'; enterFs(); };
+fsExit.onclick = exitFs; fsTopExit.onclick = exitFs;
+fsPlay.onclick = () => { if (!video) return; if (video.paused) video.play().catch(() => {}); else video.pause(); syncFsBar(); showFsBar(); };
+fsRun.onclick = () => { if (rec.active) stop(); else start(); syncFsBar(); showFsBar(); };
+fsMic.onclick = async () => { await micBtn.onclick(); syncFsBar(); showFsBar(); };
+fsSeek.oninput = () => { if (!video || !video.duration) return; video.currentTime = fsSeek.value / 1000 * video.duration; syncFsBar(); showFsBar(); };
+fsMode.onchange = () => { S.mode = fsMode.value; saveCfg(); modeSel.value = S.mode; showFsBar(); };
+fsSmaller.onclick = () => { fsScale = Math.max(0.6, +(fsScale - 0.15).toFixed(2)); placeOverlay(); showFsBar(); toast('字号 ' + Math.round(fsScale * 100) + '%'); };
+fsBigger.onclick = () => { fsScale = Math.min(2.2, +(fsScale + 0.15).toFixed(2)); placeOverlay(); showFsBar(); toast('字号 ' + Math.round(fsScale * 100) + '%'); };
+fsAuto.onclick = () => { fsScale = 1; placeOverlay(); showFsBar(); toast('字号回到自动'); };
+fsSub.onclick = () => { fsSubOn = !fsSubOn; overlay.style.visibility = fsSubOn ? 'visible' : 'hidden'; syncFsBar(); showFsBar(); };
+fsBox.addEventListener('pointerdown', showFsBar); fsBox.addEventListener('pointermove', showFsBar);
+fsBox.addEventListener('touchstart', showFsBar, { passive: true });
+fsBox.addEventListener('dblclick', e => { if (e.target === fsBox || e.target === video) fsPlay.onclick(); });
+const onFsKey = e => {
+  if (!webfs || !video) return;
+  const t = e.target && e.target.tagName;
+  if (t === 'INPUT' || t === 'SELECT' || t === 'TEXTAREA') return;
+  if (e.key === 'Escape') exitFs();
+  else if (e.key === ' ') { e.preventDefault(); fsPlay.onclick(); }
+  else if (e.key === 'ArrowRight') { video.currentTime = Math.min(video.duration || 0, video.currentTime + 5); showFsBar(); }
+  else if (e.key === 'ArrowLeft') { video.currentTime = Math.max(0, video.currentTime - 5); showFsBar(); }
+};
+document.addEventListener('keydown', onFsKey);
+const onFsResize = () => { if (!webfs) return; fitFsVideo(); placeOverlay(); scheduleFit(); };
+window.addEventListener('resize', onFsResize);
+window.addEventListener('orientationchange', onFsResize);
+if (window.visualViewport) visualViewport.addEventListener('resize', onFsResize);
+
+/* 接管站点的全屏调用：iPhone 上站点按钮走 video.webkitEnterFullscreen()，画面一交给系统播放器网页字幕就没了。
+   只改道「播放器本身或包着播放器的容器」，页面其它元素的全屏照旧走原生。 */
+function fsTarget(node) {
+  if (!node || node.nodeType !== 1) return null;
+  if (isMediaEl(node)) return (node === video || !video) ? node : null;
+  if (node === document.documentElement || node === document.body) return null;
+  const v = video || pickVideo();
+  return v && node.contains(v) ? v : null;
+}
+function fsPatch(proto, names, make) {
+  names.forEach(name => {
+    const orig = proto && proto[name];
+    if (typeof orig !== 'function') return;
+    try { proto[name] = make(orig); fsHooks.push([proto, name, orig]); } catch (e) {}
+  });
+}
+function fsInstallHook() {
+  if (fsHooks.length) return;
+  const enter = orig => function (...a) {
+    if (S.hook) {
+      const v = fsTarget(this);
+      if (v) { if (!video) video = v; if (webfs) exitFs(); else enterFs(); return Promise.resolve(); }
+    }
+    return orig.apply(this, a);
+  };
+  const exit = orig => function (...a) {
+    if (S.hook && webfs) { exitFs(); return Promise.resolve(); }
+    return orig.apply(this, a);
+  };
+  const VP = window.HTMLVideoElement && HTMLVideoElement.prototype;
+  const EP = window.Element && Element.prototype;
+  const DP = window.Document && Document.prototype;
+  fsPatch(VP, ['webkitEnterFullscreen', 'webkitEnterFullScreen'], enter);
+  fsPatch(EP, ['requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen', 'mozRequestFullScreen', 'msRequestFullscreen'], enter);
+  fsPatch(VP, ['webkitExitFullscreen', 'webkitExitFullScreen'], exit);
+  fsPatch(DP, ['exitFullscreen', 'webkitExitFullscreen', 'webkitCancelFullScreen', 'mozCancelFullScreen', 'msExitFullscreen'], exit);
+}
+function fsRemoveHook() { while (fsHooks.length) { const [o, n, f] = fsHooks.pop(); try { o[n] = f; } catch (e) {} } }
+fsInstallHook();
+function syncHookBtn() {
+  hookBtn.textContent = '接管站点全屏：' + (S.hook ? '开' : '关');
+  hookBtn.style.background = S.hook ? '#4f8cff' : 'transparent';
+  hookBtn.style.borderColor = S.hook ? '#4f8cff' : '#262a33';
+  hookBtn.style.color = S.hook ? '#fff' : '#8b93a3';
+}
+hookBtn.onclick = () => {
+  S.hook = !S.hook; saveCfg(); syncHookBtn();
+  setStatus(S.hook ? '已接管站点的全屏按钮：点它进网页全屏，字幕跟着画面。' : '已交还站点原来的全屏行为（iPhone 上会进系统播放器，字幕盖不上）。', S.hook ? 'ok' : 'warn');
+};
+syncHookBtn();
 
 function setStatus(msg, kind) {
   statusEl.textContent = msg;
   statusEl.style.color = kind === 'err' ? '#ff6b6b' : kind === 'warn' ? '#ffb454' : kind === 'ok' ? '#3ecf8e' : '#8b93a3';
+  if (webfs && (kind === 'err' || kind === 'warn')) toast(msg, kind);   // 全屏里面板收起来了，报错/警告要看得见；例行出句状态不刷屏
 }
 function syncMicBtn() {
   const on = rec.active ? !!micNode : S.mic;
@@ -97,9 +354,11 @@ function syncMicBtn() {
   micBtn.style.background = on ? '#4f8cff' : 'transparent';
   micBtn.style.borderColor = on ? '#4f8cff' : '#262a33';
   micBtn.style.color = on ? '#fff' : '#8b93a3';
+  if (webfs) syncFsBar();
 }
 function isMediaEl(e) { return !!e && /^(VIDEO|AUDIO)$/.test(e.tagName); }
 function uiHost() {
+  if (webfs) return fsBox;   // 自己的全屏层：真全屏时只有它的子树会渲染，字幕必须住在里面
   const h = document.fullscreenElement || document.webkitFullscreenElement;
   // 系统全屏会把 video 自己当全屏元素，而 video 是替换元素：塞进去的节点实测尺寸恒为 0×0，还可能被播放器 teardown 丢掉
   return isMediaEl(h) ? document.body : (h || document.body);
@@ -116,19 +375,26 @@ function placeOverlay() {
   const r = video.getBoundingClientRect();
   if (r.width < 10 || r.height < 10) { overlay.style.display = 'none'; return; }
   if (rec.active) overlay.style.display = 'block';
+  overlay.style.zIndex = String(webfs ? 4 : Z - 1);
   overlay.style.left = r.left + 'px'; overlay.style.top = r.top + 'px';
   overlay.style.width = r.width + 'px'; overlay.style.height = r.height + 'px';
-  const fs = Math.max(14, Math.round(r.width * 0.032));
-  zEl.style.fontSize = fs + 'px'; oEl.style.fontSize = Math.round(fs * 0.76) + 'px';
-  const gap = Math.max(28, Math.round(r.height * 0.09));
+  const fs = Math.max(11, Math.round(Math.max(14, r.width * 0.032) * fsScale));   // 自动字号保住 14px 可读地板，手动缩到 60% 时不低于 11px
+  zEl.style.fontSize = fs + 'px'; oEl.style.fontSize = Math.max(10, Math.round(fs * 0.76)) + 'px';
+  let gap = Math.max(24, Math.round(r.height * 0.09));
+  if (webfs && fsBarShown) {   // 控制栏露出来时把字幕抬到栏上方，别被压住
+    const need = Math.round(r.bottom - fsBar.getBoundingClientRect().top + 12);
+    if (need > gap) gap = Math.min(Math.round(r.height * 0.5), need);
+  }
   oEl.style.position = 'absolute'; zEl.style.position = 'absolute';
   zEl.style.left = '6%'; zEl.style.right = '6%'; zEl.style.bottom = gap + 'px';
   oEl.style.left = '6%'; oEl.style.right = '6%'; oEl.style.bottom = (gap + fs * 1.35 + 3) + 'px';
 }
-const sysFsWarn = () => setStatus('刚才是系统全屏（画面交给了系统播放器），网页字幕盖不上去。想横屏看字幕：直接把手机横过来、别点播放器的全屏按钮，字幕会跟着画面走。', 'warn');
+const sysFsWarn = () => setStatus('这个站的全屏走了系统播放器，网页字幕盖不上去。请点右下「全屏」按钮（或面板里的「网页全屏」），再把手机横过来。', 'warn');
 const onFsChange = () => {
-  reparentUI();
-  if (isMediaEl(document.fullscreenElement || document.webkitFullscreenElement)) sysFsWarn();
+  const h = document.fullscreenElement || document.webkitFullscreenElement;
+  if (webfs && fsReal && h !== fsBox) { exitFs(); return; }   // 浏览器/Esc 自己退掉了真全屏，DOM 也要跟着还原
+  reparentUI(); placeOverlay();
+  if (isMediaEl(h)) sysFsWarn();
 };
 document.addEventListener('fullscreenchange', onFsChange);
 document.addEventListener('webkitfullscreenchange', onFsChange);
@@ -151,6 +417,7 @@ class MshCap extends AudioWorkletProcessor{
 registerProcessor('msh-cap', MshCap);`;
 
 function pickVideo() {
+  if (webfs && video && video.isConnected) return video;   // 全屏层里就认这一个，别让站点别的 video 抢走
   const vs = [...document.querySelectorAll('video')].filter(v => (v.currentSrc || v.src) && v.getBoundingClientRect().width > 40);
   if (!vs.length) return null;
   vs.sort((a, b) => { const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect(); return rb.width * rb.height - ra.width * ra.height; });
@@ -496,7 +763,7 @@ const onPlay = () => {
   }
 };
 const onGeom = () => placeOverlay();
-const onSysFsEnd = () => { placeOverlay(); sysFsWarn(); };   // iOS 原生全屏不一定派发 document 的 fullscreenchange，只有这两个事件可靠
+const onSysFsEnd = () => { placeOverlay(); if (!webfs && !fsSelfExit) sysFsWarn(); };   // iOS 原生全屏不一定派发 document 的 fullscreenchange，只有这两个事件可靠
 function bindVideoEvents() {
   video.addEventListener('seeked', onSeeked); video.addEventListener('pause', onPause); video.addEventListener('play', onPlay);
   video.addEventListener('webkitendfullscreen', onSysFsEnd);
@@ -561,9 +828,16 @@ micBtn.onclick = async () => {
 };
 btnDestroy.onclick = () => {
   stop();
+  exitFs();
+  fsRemoveHook();
   document.removeEventListener('fullscreenchange', onFsChange);
   document.removeEventListener('webkitfullscreenchange', onFsChange);
-  chip.remove(); panel.remove(); overlay.remove();
+  document.removeEventListener('keydown', onFsKey);
+  window.removeEventListener('resize', onFsResize);
+  window.removeEventListener('orientationchange', onFsResize);
+  if (window.visualViewport) visualViewport.removeEventListener('resize', onFsResize);
+  clearTimeout(fsBarTimer); clearTimeout(fsFitTimer); clearTimeout(fsFitTimer2); clearTimeout(fsToastTimer);
+  chip.remove(); panel.remove(); overlay.remove(); fsBox.remove(); fsChip.remove(); fsStyleEl.remove();
   delete window.__mshInject;
 };
 
@@ -589,12 +863,16 @@ const _d = {};
 ].forEach(([k, set, get]) => Object.defineProperty(_d, k, { set, get, configurable: true }));
 _d.rec = rec; _d.lines = lines; _d.pending = pending; _d.waitQueue = waitQueue; _d.frontierTasks = frontierTasks; _d.S = S;
 _d.feed = onAudioData; _d.tick = tick; _d.flushTranslate = flushTranslate; _d.placeOverlay = placeOverlay; _d.display = display;
+_d.fsBox = fsBox; _d.fsBar = fsBar; _d.fsHooks = fsHooks;
+_d.enterFs = enterFs; _d.exitFs = exitFs; _d.fitFsVideo = fitFsVideo; _d.syncFsBar = syncFsBar;
+[['webfs', () => webfs], ['fsReal', () => fsReal], ['fsScale', () => fsScale], ['fsBarShown', () => fsBarShown]]
+  .forEach(([k, get]) => Object.defineProperty(_d, k, { get, configurable: true }));
 
 window.__mshInject = {
   version: VER,
   toggle: () => { panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; },
   setKey: k => { S.key = String(k || '').trim(); saveCfg(); keyInput.value = S.key; },
-  start, stop,
+  start, stop, enterFs, exitFs,
   destroy: () => btnDestroy.onclick(),
   _d
 };
